@@ -21,18 +21,18 @@ sort and download from.
     ]]></description>
     <version>1.0.0</version>
     <licence>agpl</licence>
-    <author homepage="https://github.com/OWNER">OWNER</author>
+    <author homepage="https://github.com/fifthQuark">fifthQuark</author>
     <namespace>Opds</namespace>
     <documentation>
-        <user>https://github.com/OWNER/nextcloud-opds/blob/main/README.md</user>
-        <admin>https://github.com/OWNER/nextcloud-opds/blob/main/README.md</admin>
-        <developer>https://github.com/OWNER/nextcloud-opds</developer>
+        <user>https://github.com/fifthQuark/nextcloud-opds/blob/main/README.md</user>
+        <admin>https://github.com/fifthQuark/nextcloud-opds/blob/main/README.md</admin>
+        <developer>https://github.com/fifthQuark/nextcloud-opds</developer>
     </documentation>
     <category>files</category>
     <category>multimedia</category>
-    <website>https://github.com/OWNER/nextcloud-opds</website>
-    <bugs>https://github.com/OWNER/nextcloud-opds/issues</bugs>
-    <repository type="git">https://github.com/OWNER/nextcloud-opds.git</repository>
+    <website>https://github.com/fifthQuark/nextcloud-opds</website>
+    <bugs>https://github.com/fifthQuark/nextcloud-opds/issues</bugs>
+    <repository type="git">https://github.com/fifthQuark/nextcloud-opds.git</repository>
     <dependencies>
         <php min-version="8.1"/>
         <nextcloud min-version="28" max-version="35"/>
