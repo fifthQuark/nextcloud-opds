@@ -1,0 +1,9 @@
+/vendor/
+/node_modules/
+*.swp
+.DS_Store
+/build/
+# never commit signing material
+*.key
+*.csr
+*.crt

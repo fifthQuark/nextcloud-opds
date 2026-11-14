@@ -1,0 +1,8 @@
+# Not part of the release tarball (make tarball / git archive)
+/.github            export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/Makefile           export-ignore
+/PUBLISHING.md      export-ignore
+/scripts            export-ignore
+/build              export-ignore

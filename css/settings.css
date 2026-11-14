@@ -1,0 +1,60 @@
+#opds-settings .opds-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, max-content) 1fr;
+    gap: 10px 16px;
+    align-items: center;
+    max-width: 900px;
+    margin-bottom: 12px;
+}
+#opds-settings .opds-grid label {
+    font-weight: 600;
+}
+#opds-settings .opds-grid input[type="text"],
+#opds-settings .opds-grid select {
+    width: 100%;
+    max-width: 520px;
+}
+#opds-settings .opds-grid input[type="number"] {
+    width: 90px;
+}
+#opds-settings .opds-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+#opds-settings .opds-row input[type="text"] {
+    flex: 1 1 300px;
+}
+#opds-settings .opds-feed-box {
+    background: var(--color-background-hover, rgba(0, 0, 0, 0.04));
+    border-radius: var(--border-radius-large, 10px);
+    padding: 12px 16px;
+    margin: 12px 0 20px;
+    max-width: 900px;
+}
+#opds-settings .opds-feed-box input {
+    width: 100%;
+    max-width: 640px;
+    font-family: monospace;
+}
+#opds-settings .opds-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 8px 0 16px;
+}
+#opds-settings .opds-status {
+    margin-left: 8px;
+    color: var(--color-text-maxcontrast, #767676);
+}
+#opds-settings .opds-status-ok {
+    color: var(--color-success-text, var(--color-success, #2d7b41));
+}
+#opds-settings .opds-status-error {
+    color: var(--color-error-text, var(--color-error, #d91f2c));
+}
+#opds-settings h3 {
+    margin-top: 24px;
+}
