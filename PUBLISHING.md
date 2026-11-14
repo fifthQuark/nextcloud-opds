@@ -26,21 +26,29 @@ git push -u origin main
 ## 2. Get a signing certificate from Nextcloud
 
 Nextcloud only installs store apps whose files are signed with a certificate issued by
-Nextcloud for that app id. Request one:
+Nextcloud for that app id. The procedure is documented in the
+[App Store developer guide](https://nextcloudappstore.readthedocs.io/en/latest/developer.html#obtaining-a-certificate)
+and the server manual's [code signing page](https://docs.nextcloud.com/server/latest/developer_manual/app_publishing_maintenance/code_signing.html).
+In short:
 
 ```bash
+mkdir -p ~/.nextcloud/certificates && cd ~/.nextcloud/certificates
 openssl req -nodes -newkey rsa:4096 -keyout opds.key -out opds.csr -subj "/CN=opds"
 ```
 
-Keep `opds.key` **private** and never commit it (it is in `.gitignore`-worthy territory:
-store it in a password manager). Then:
+Keep `opds.key` **private**, never commit it, and back it up (a lost key means a new
+certificate request). Then:
 
-1. Fork <https://github.com/nextcloud/app-certificate-requests>.
-2. Add the file `opds/opds.csr` (folder named after the app id) and open a pull request.
-   Mention the repository URL from step 1 in the PR description.
-3. A Nextcloud maintainer verifies the request and commits the signed certificate as
-   `opds/opds.crt` in that repository. This is a manual step and usually takes a few days.
-4. Download `opds.crt` next to your `opds.key`.
+1. Make sure your e-mail address is visible on your GitHub profile (the docs ask for this
+   so the maintainers can verify you).
+2. Fork <https://github.com/nextcloud/app-certificate-requests>, add the file
+   `opds/opds.csr` (a folder named after the app id, containing the CSR) and open a pull
+   request against the upstream repository. Put the link to your public app repository,
+   `https://github.com/fifthQuark/nextcloud-opds`, in the PR description.
+3. A Nextcloud maintainer verifies the request (they may ask questions in the PR) and posts
+   the signed certificate as `opds/opds.crt` in that repository. This is manual and usually
+   takes a few days.
+4. Save it as `~/.nextcloud/certificates/opds.crt`, next to the key.
 
 The app id `opds` is reserved for your account by this certificate. If the id is already
 taken, the maintainers will tell you; change `<id>` in `appinfo/info.xml`, the folder
@@ -49,11 +57,11 @@ name, the `namespace` stays `Opds`, and the routes keep working.
 ## 3. Register the app in the App Store
 
 1. Create an account at <https://apps.nextcloud.com/register> and confirm the e-mail.
-2. Open <https://apps.nextcloud.com/developer/register>, paste the content of `opds.crt`
-   and the signature of the app id, generated with:
+2. Open <https://apps.nextcloud.com/developer/apps/new>, paste the content of `opds.crt`
+   into *Certificate* and, into *Signature*, the signed app id generated with:
 
    ```bash
-   echo -n "opds" | openssl dgst -sha512 -sign opds.key | openssl base64 -A
+   echo -n "opds" | openssl dgst -sha512 -sign ~/.nextcloud/certificates/opds.key | openssl base64 -A
    ```
 
 3. Create an API token at <https://apps.nextcloud.com/account/token> (needed for the
@@ -90,9 +98,9 @@ make release KEY=opds.key CERT=opds.crt
 ```
 
 builds `build/opds-<version>.tar.gz` plus `build/opds-<version>.tar.gz.sig`. Upload the
-tarball to a GitHub release (or any https URL), then open
-<https://apps.nextcloud.com/developer/upload>, paste the download URL and the content of
-the `.sig` file.
+tarball to a GitHub release (or any https URL, max. 20 MB), then open
+<https://apps.nextcloud.com/developer/apps/releases/new>, paste the download URL and the
+content of the `.sig` file.
 
 ## Notes for Hetzner Storage Share
 
