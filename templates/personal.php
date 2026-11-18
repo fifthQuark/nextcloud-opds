@@ -7,7 +7,7 @@ $s = $_['settings'];
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 ?>
 <div id="opds-settings" class="section" data-settings="<?php p(json_encode($s)); ?>">
-    <h2>OPDS Catalog</h2>
+    <h2>OPDS+</h2>
     <p class="settings-hint">
         Serve a folder of e-books as an OPDS catalog that reader apps (KOReader, Moon+ Reader, Thorium, Librera, Aldiko, Foliate …) can browse, sort, search and download from.
     </p>

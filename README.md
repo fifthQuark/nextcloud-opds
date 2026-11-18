@@ -1,4 +1,4 @@
-# OPDS Catalog for Nextcloud
+# OPDS+ for Nextcloud
 
 Turns a folder in your Nextcloud into an [OPDS 1.2](https://specs.opds.io/opds-1.2) catalog that
 e-reader apps can browse, sort, search and download from. Readers sign in with a Nextcloud
@@ -32,7 +32,7 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
 1. Copy (or clone) this directory to `<nextcloud>/apps/opds` or `<nextcloud>/custom_apps/opds`
    and make sure the web server user can read it.
 2. Enable it: `occ app:enable opds` (or Apps → Disabled apps in the web UI).
-3. In **Settings → Personal → OPDS Catalog** choose the library folder (default `/Books`),
+3. In **Settings → Personal → OPDS+** choose the library folder (default `/Books`),
    optionally adjust the file types, default sort order and page size, and press *Save*.
 4. Press *Scan for new and changed books* (or run `occ opds:scan <user>` for large libraries).
 5. Create an app password under **Settings → Security → Devices & sessions**.

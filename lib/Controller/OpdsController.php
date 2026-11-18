@@ -96,7 +96,7 @@ class OpdsController extends Controller {
 
         return $this->feedResponse([
             'id' => 'urn:nextcloud-opds:root',
-            'title' => 'Nextcloud OPDS Catalog',
+            'title' => 'OPDS+',
             'subtitle' => $total . ' books in ' . $this->config->getRoot($uid),
             'kind' => FeedBuilder::NAVIGATION,
             'updated' => $this->config->getLastScan($uid) ?: $this->time->getTime(),

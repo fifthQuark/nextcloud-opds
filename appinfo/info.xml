@@ -2,7 +2,7 @@
 <info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
     <id>opds</id>
-    <name>OPDS Catalog</name>
+    <name>OPDS+</name>
     <summary>Serve a folder of e-books as an OPDS catalog for e-reader apps</summary>
     <description><![CDATA[
 Turns a folder in your Nextcloud into an OPDS 1.2 catalog that e-reader apps
@@ -19,7 +19,7 @@ sort and download from.
 * Log in from your reader with your Nextcloud user name and an app password
   (Settings > Security > Devices & sessions).
     ]]></description>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <licence>agpl</licence>
     <author homepage="https://github.com/fifthQuark">fifthQuark</author>
     <namespace>Opds</namespace>

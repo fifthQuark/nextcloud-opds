@@ -1,4 +1,4 @@
-# Publishing OPDS Catalog to the Nextcloud App Store
+# Publishing OPDS+ to the Nextcloud App Store
 
 Once the app is in the [App Store](https://apps.nextcloud.com) it can be installed from
 **Apps** in the Nextcloud web UI of any instance, including managed ones such as Hetzner
@@ -105,7 +105,7 @@ content of the `.sig` file.
 ## Notes for Hetzner Storage Share
 
 * Storage Share admins install apps from the App Store under **Apps → Multimedia** (or by
-  searching "OPDS"). The Nextcloud version there must be inside the app's supported range;
+  searching "OPDS+"). The Nextcloud version there must be inside the app's supported range;
   when Hetzner upgrades to a newer major version, raise `max-version` in `info.xml` and
   publish a new release.
 * There is no shell, so indexing happens from the settings page button, automatically on

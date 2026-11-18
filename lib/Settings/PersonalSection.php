@@ -25,7 +25,7 @@ class PersonalSection implements IIconSection {
     }
 
     public function getName(): string {
-        return $this->l->t('OPDS Catalog');
+        return $this->l->t('OPDS+');
     }
 
     public function getPriority(): int {

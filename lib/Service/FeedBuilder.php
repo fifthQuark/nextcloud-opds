@@ -93,7 +93,7 @@ class FeedBuilder {
         }
         $w->writeElement('updated', $this->date($feed['updated']));
         $w->startElement('author');
-        $w->writeElement('name', 'Nextcloud OPDS Catalog');
+        $w->writeElement('name', 'OPDS+');
         $w->endElement();
 
         $kindType = $feed['kind'] === self::NAVIGATION ? self::TYPE_NAV : self::TYPE_ACQ;
@@ -153,8 +153,8 @@ class FeedBuilder {
         $w->setIndent(true);
         $w->startDocument('1.0', 'UTF-8');
         $w->startElementNs(null, 'OpenSearchDescription', 'http://a9.com/-/spec/opensearch/1.1/');
-        $w->writeElement('ShortName', 'Nextcloud OPDS');
-        $w->writeElement('Description', 'Search the Nextcloud OPDS catalog');
+        $w->writeElement('ShortName', 'OPDS+');
+        $w->writeElement('Description', 'Search the OPDS+ catalog');
         $w->writeElement('InputEncoding', 'UTF-8');
         $w->writeElement('OutputEncoding', 'UTF-8');
         $w->startElement('Url');
