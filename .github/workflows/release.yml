@@ -19,6 +19,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -70,9 +72,9 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to the Nextcloud App Store
-        if: ${{ secrets.APPSTORE_TOKEN != '' }}
+        # Secrets cannot be used in `if:` directly; APPSTORE_TOKEN comes from the job env.
+        if: ${{ env.APPSTORE_TOKEN != '' }}
         env:
-          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
           DOWNLOAD: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.app.outputs.tarball }}
           SIGNATURE: ${{ steps.build.outputs.signature }}
         run: |
