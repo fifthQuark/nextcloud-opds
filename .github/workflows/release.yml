@@ -48,11 +48,16 @@ jobs:
           git archive --format=tar HEAD | tar -x -C build/${{ steps.app.outputs.id }}
 
       - name: Write signing key and certificate
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_CERTIFICATE: ${{ secrets.APP_CERTIFICATE }}
         run: |
-          printf '%s' "${{ secrets.APP_PRIVATE_KEY }}" > "${RUNNER_TEMP}/app.key"
-          printf '%s' "${{ secrets.APP_CERTIFICATE }}" > "${RUNNER_TEMP}/app.crt"
-          test -s "${RUNNER_TEMP}/app.key" || { echo "APP_PRIVATE_KEY secret is empty" >&2; exit 1; }
-          test -s "${RUNNER_TEMP}/app.crt" || { echo "APP_CERTIFICATE secret is empty" >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$APP_PRIVATE_KEY" > "${RUNNER_TEMP}/app.key"
+          printf '%s\n' "$APP_CERTIFICATE" > "${RUNNER_TEMP}/app.crt"
+          openssl pkey -in "${RUNNER_TEMP}/app.key" -noout 2>/dev/null || { echo "APP_PRIVATE_KEY is missing or not a valid PEM key" >&2; exit 1; }
+          openssl x509 -in "${RUNNER_TEMP}/app.crt" -noout 2>/dev/null || { echo "APP_CERTIFICATE is missing or not a valid PEM certificate" >&2; exit 1; }
+          [ "$(openssl pkey -in "${RUNNER_TEMP}/app.key" -pubout)" = "$(openssl x509 -in "${RUNNER_TEMP}/app.crt" -pubkey -noout)" ] || { echo "APP_PRIVATE_KEY does not match APP_CERTIFICATE" >&2; exit 1; }
 
       - name: Sign app files (occ integrity:sign-app)
         run: scripts/sign-app.sh build/${{ steps.app.outputs.id }} "${RUNNER_TEMP}/app.key" "${RUNNER_TEMP}/app.crt"
