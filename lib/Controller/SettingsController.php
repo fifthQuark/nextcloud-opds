@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\Opds\Controller;
 
 use OCA\Opds\AppInfo\Application;
+use OCA\Opds\News\NewsService;
 use OCA\Opds\Service\Config;
 use OCA\Opds\Service\LibraryScanner;
 use OCP\AppFramework\Controller;
@@ -27,6 +28,7 @@ class SettingsController extends Controller {
         private IRootFolder $rootFolder,
         private Config $config,
         private LibraryScanner $scanner,
+        private NewsService $news,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -83,6 +85,40 @@ class SettingsController extends Controller {
         $uid = $this->uid();
         $this->scanner->reset($uid);
         return new JSONResponse(['ok' => true]);
+    }
+
+    /**
+     * @param int[] $folders
+     * @param int[] $feeds
+     */
+    #[NoAdminRequired]
+    public function saveNews(
+        bool $enabled = true, bool $all = true, array $folders = [], array $feeds = [],
+        string $period = '24h', bool $unread = false, int $max = 30, bool $images = true,
+    ): JSONResponse {
+        $uid = $this->uid();
+        if (!$all && $folders === [] && $feeds === []) {
+            return new JSONResponse(['error' => 'Select at least one folder or feed, or choose all feeds'], Http::STATUS_BAD_REQUEST);
+        }
+        $this->config->saveNews($uid, [
+            'enabled' => $enabled,
+            'all' => $all,
+            'folders' => $folders,
+            'feeds' => $feeds,
+            'period' => $period,
+            'unread' => $unread,
+            'max' => $max,
+            'images' => $images,
+        ]);
+        $summary = '';
+        if ($enabled && $this->news->isNewsInstalled($uid)) {
+            $edition = $this->news->edition($uid);
+            $summary = $edition['total'] === 0
+                ? 'The edition is currently empty.'
+                : sprintf('The current edition has %d %s from %d %s.', $edition['total'], $edition['total'] === 1 ? 'article' : 'articles',
+                    count($edition['parts']), count($edition['parts']) === 1 ? 'feed' : 'feeds');
+        }
+        return new JSONResponse(['news' => $this->config->getNews($uid), 'summary' => $summary]);
     }
 
     private function uid(): string {

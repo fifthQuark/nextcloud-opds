@@ -6,6 +6,7 @@ namespace OCA\Opds\Settings;
 
 use OCA\Opds\AppInfo\Application;
 use OCA\Opds\Db\BookRepository;
+use OCA\Opds\News\NewsService;
 use OCA\Opds\Service\Config;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\IURLGenerator;
@@ -19,6 +20,7 @@ class Personal implements ISettings {
         private IURLGenerator $urlGenerator,
         private Config $config,
         private BookRepository $repository,
+        private NewsService $news,
     ) {
     }
 
@@ -34,6 +36,17 @@ class Personal implements ISettings {
             $report = is_array($decoded) ? $decoded : null;
         }
 
+        $newsInstalled = false;
+        $newsTree = ['folders' => [], 'feeds' => []];
+        try {
+            $newsInstalled = $this->news->isNewsInstalled($uid);
+            if ($newsInstalled) {
+                $newsTree = $this->news->tree($uid);
+            }
+        } catch (\Throwable $e) {
+            $newsInstalled = false;
+        }
+
         return new TemplateResponse(Application::APP_ID, 'personal', [
             'settings' => $this->config->getAll($uid),
             'sorts' => Config::SORTS,
@@ -43,6 +56,10 @@ class Personal implements ISettings {
             'lastScan' => $this->config->getLastScan($uid),
             'report' => $report,
             'userId' => $uid,
+            'newsInstalled' => $newsInstalled,
+            'newsTree' => $newsTree,
+            'news' => $this->config->getNews($uid),
+            'newsPeriods' => Config::NEWS_PERIODS,
         ], '');
     }
 

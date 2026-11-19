@@ -113,6 +113,74 @@
         }
     });
 
+    // ------------------------------------------------------------ news digest
+    const news = $('opds-news');
+    if (news) {
+        const newsStatus = $('opds-news-status');
+        const tree = $('opds-news-tree');
+        const folderBoxes = () => Array.from(news.querySelectorAll('.opds-news-folder-box'));
+        const feedBoxes = () => Array.from(news.querySelectorAll('.opds-news-feed-box'));
+
+        // A selected folder includes all of its feeds, so its feed boxes show as checked and locked
+        function syncTree() {
+            const some = $('opds-news-some').checked;
+            const enabled = $('opds-news-enabled').checked;
+            tree.classList.toggle('opds-disabled', !some || !enabled);
+            $('opds-news-options').classList.toggle('opds-disabled', !enabled);
+            for (const box of feedBoxes()) {
+                const parent = box.dataset.parent ? $('opds-news-folder-' + box.dataset.parent) : null;
+                const viaFolder = parent !== null && parent.checked;
+                if (viaFolder) {
+                    if (!box.disabled) {
+                        box.dataset.own = box.checked ? '1' : '0';
+                    }
+                    box.checked = true;
+                    box.disabled = true;
+                } else if (box.disabled) {
+                    box.disabled = false;
+                    box.checked = box.dataset.own === '1';
+                }
+            }
+            for (const input of tree.querySelectorAll('input')) {
+                if (!some || !enabled) {
+                    input.setAttribute('tabindex', '-1');
+                } else {
+                    input.removeAttribute('tabindex');
+                }
+            }
+        }
+
+        news.addEventListener('change', syncTree);
+        syncTree();
+
+        $('opds-news-save').addEventListener('click', async () => {
+            const folders = folderBoxes().filter((b) => b.checked).map((b) => Number(b.dataset.folder));
+            // Feeds inside a selected folder are covered by the folder itself
+            const feeds = feedBoxes().filter((b) => b.checked && !b.disabled).map((b) => Number(b.dataset.feed));
+            const all = $('opds-news-all').checked;
+            if (!all && folders.length === 0 && feeds.length === 0) {
+                setStatus(newsStatus, 'Select at least one folder or feed', 'error');
+                return;
+            }
+            setStatus(newsStatus, 'Saving…');
+            try {
+                const data = await post('/settings/news', {
+                    enabled: $('opds-news-enabled').checked,
+                    all: all,
+                    folders: folders,
+                    feeds: feeds,
+                    period: $('opds-news-period').value,
+                    max: Number($('opds-news-max').value) || 30,
+                    unread: $('opds-news-unread').checked,
+                    images: $('opds-news-images').checked,
+                });
+                setStatus(newsStatus, 'Saved. ' + (data.summary || ''), 'ok');
+            } catch (e) {
+                setStatus(newsStatus, e.message, 'error');
+            }
+        });
+    }
+
     const pick = $('opds-pick-folder');
     if (window.OC && OC.dialogs && typeof OC.dialogs.filepicker === 'function') {
         pick.addEventListener('click', () => {

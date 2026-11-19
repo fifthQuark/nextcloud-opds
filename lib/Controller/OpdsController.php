@@ -9,6 +9,7 @@ use OCA\Opds\Db\Book;
 use OCA\Opds\Db\BookFilter;
 use OCA\Opds\Db\BookRepository;
 use OCA\Opds\Db\Sorting;
+use OCA\Opds\News\NewsService;
 use OCA\Opds\Service\Config;
 use OCA\Opds\Service\CoverService;
 use OCA\Opds\Service\FeedBuilder;
@@ -58,6 +59,7 @@ class OpdsController extends Controller {
         private LibraryScanner $scanner,
         private CoverService $covers,
         private FeedBuilder $feeds,
+        private NewsService $news,
         private LoggerInterface $logger,
     ) {
         parent::__construct(Application::APP_ID, $request);
@@ -93,6 +95,10 @@ class OpdsController extends Controller {
         }
         $entries[] = $this->nav('folders', 'Folders', $this->feeds->route('folders'),
             'Browse the library folder structure', FeedBuilder::ACQUISITION);
+        if ($this->newsActive($uid)) {
+            $entries[] = $this->nav('news', 'News', $this->feeds->route('news'),
+                'Today\'s articles from Nextcloud News as an e-book, one part per feed', FeedBuilder::ACQUISITION);
+        }
 
         return $this->feedResponse([
             'id' => 'urn:nextcloud-opds:root',
@@ -287,6 +293,94 @@ class OpdsController extends Controller {
     public function opensearch(): Response {
         $xml = $this->feeds->renderOpenSearch($this->searchTemplate(), $this->feeds->route('opensearch'));
         return new DataDisplayResponse($xml, Http::STATUS_OK, ['Content-Type' => 'application/opensearchdescription+xml; charset=utf-8']);
+    }
+
+    // ------------------------------------------------------------------ news
+
+    #[PublicPage]
+    #[NoCSRFRequired]
+    public function news(): Response {
+        $uid = $this->authenticate();
+        if ($uid instanceof Response) {
+            return $uid;
+        }
+        if (!$this->newsActive($uid)) {
+            return $this->notFound();
+        }
+        $edition = $this->news->edition($uid);
+        $feed = [
+            'id' => 'urn:nextcloud-opds:news',
+            'title' => 'News',
+            'subtitle' => $edition['total'] > 0
+                ? $edition['subtitle']
+                : 'No articles in the selected feeds for ' . lcfirst($edition['subtitle']),
+            'kind' => FeedBuilder::ACQUISITION,
+            'updated' => $edition['updated'],
+            'self' => $this->feeds->route('news'),
+            'start' => $this->feeds->route('root'),
+            'up' => $this->feeds->route('root'),
+            'entries' => [],
+        ];
+        if ($edition['total'] > 0) {
+            $contents = array_map(static fn (array $p): string => $p['feed']['title'] . ' (' . $p['count'] . ')', $edition['parts']);
+            $feed['entries'][] = [
+                'type' => 'publication',
+                'id' => 'urn:nextcloud-opds:news:' . $edition['key'],
+                'title' => $edition['title'],
+                'updated' => $edition['updated'],
+                'author' => 'Nextcloud News',
+                'issued' => $edition['date'],
+                'categories' => ['News'],
+                'summary' => sprintf("%s\n%s from %s.\n\n%s",
+                    $edition['subtitle'],
+                    $this->count($edition['total'], 'article'),
+                    $this->count(count($edition['parts']), 'feed'),
+                    implode("\n", $contents)),
+                'download' => $this->feeds->route('newsDownload', ['name' => $edition['fileName']]) . '?v=' . $edition['key'],
+                'mime' => 'application/epub+zip',
+                'format' => 'epub',
+            ];
+        }
+        return $this->feedResponse($feed);
+    }
+
+    #[PublicPage]
+    #[NoCSRFRequired]
+    public function newsDownload(string $name = ''): Response {
+        $uid = $this->authenticate();
+        if ($uid instanceof Response) {
+            return $uid;
+        }
+        if (!$this->newsActive($uid)) {
+            return $this->notFound();
+        }
+        try {
+            $edition = $this->news->edition($uid);
+            $file = $this->news->epub($uid, $edition);
+        } catch (\Throwable $e) {
+            $this->logger->error('OPDS: could not build the news edition: ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
+            return new DataDisplayResponse('The news edition could not be built.', Http::STATUS_INTERNAL_SERVER_ERROR, ['Content-Type' => 'text/plain']);
+        }
+        $this->config->setUserValueRaw($uid, 'news_last_download', (string)$this->time->getTime());
+        if ($file === null) {
+            return new DataDisplayResponse('No articles in the selected feeds right now.', Http::STATUS_NOT_FOUND, ['Content-Type' => 'text/plain']);
+        }
+        $response = new StreamResponse($file->read());
+        $response->addHeader('Content-Type', 'application/epub+zip');
+        $response->addHeader('Content-Length', (string)$file->getSize());
+        $response->addHeader('Content-Disposition', $this->contentDisposition($edition['fileName']));
+        $response->addHeader('X-Content-Type-Options', 'nosniff');
+        $response->setETag($edition['key']);
+        $response->cacheFor(0);
+        return $response;
+    }
+
+    private function newsActive(string $uid): bool {
+        try {
+            return $this->news->isActive($uid);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     // ----------------------------------------------------------------- files

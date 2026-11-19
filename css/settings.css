@@ -58,3 +58,25 @@
 #opds-settings h3 {
     margin-top: 24px;
 }
+#opds-settings .opds-grid .opds-label {
+    font-weight: 600;
+}
+#opds-settings .opds-news-tree {
+    max-width: 900px;
+    max-height: 420px;
+    overflow-y: auto;
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: var(--border-radius-large, 10px);
+    padding: 8px 12px;
+    margin-bottom: 8px;
+}
+#opds-settings .opds-news-folder {
+    margin: 6px 0;
+}
+#opds-settings .opds-news-folder ul {
+    margin: 2px 0 6px 28px;
+}
+#opds-settings .opds-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}

@@ -81,6 +81,104 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
         <span id="opds-save-status" class="opds-status" aria-live="polite"></span>
     </div>
 
+    <?php $n = $_['news']; ?>
+    <h3 id="opds-news-heading">News</h3>
+    <?php if (!$_['newsInstalled']): ?>
+        <p class="settings-hint">
+            Install and enable the <strong>News</strong> app to read the day's articles from your feeds as an e-book:
+            the catalog then offers a <em>News</em> entry with one part per feed and one chapter per article.
+        </p>
+    <?php else: ?>
+    <div id="opds-news" data-news="<?php p(json_encode($n)); ?>">
+        <p class="settings-hint">
+            Adds a <em>News</em> entry to the catalog with an EPUB of the latest articles from Nextcloud News:
+            each feed becomes a part of the book and each article a chapter.
+        </p>
+        <p>
+            <input type="checkbox" class="checkbox" id="opds-news-enabled" <?php if ($n['enabled']) { echo 'checked'; } ?>>
+            <label for="opds-news-enabled">Offer the news e-book in the catalog</label>
+        </p>
+        <div class="opds-grid" id="opds-news-options">
+            <label for="opds-news-period">Articles from</label>
+            <div>
+                <select id="opds-news-period">
+                    <?php foreach ($_['newsPeriods'] as $key => $label): ?>
+                        <option value="<?php echo $e($key); ?>" <?php if ($n['period'] === $key) { echo 'selected'; } ?>><?php echo $e($label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <label for="opds-news-max">At most</label>
+            <div><input type="number" id="opds-news-max" min="1" max="500" value="<?php echo $e((string)$n['max']); ?>"> articles per feed (newest first)</div>
+
+            <span class="opds-label">Options</span>
+            <div>
+                <input type="checkbox" class="checkbox" id="opds-news-unread" <?php if ($n['unread']) { echo 'checked'; } ?>>
+                <label for="opds-news-unread">Only unread articles</label>
+                <br>
+                <input type="checkbox" class="checkbox" id="opds-news-images" <?php if ($n['images']) { echo 'checked'; } ?>>
+                <label for="opds-news-images">Include images (downloaded by the server, larger book)</label>
+            </div>
+
+            <span class="opds-label">Feeds</span>
+            <div>
+                <input type="radio" class="radio" name="opds-news-scope" id="opds-news-all" value="all" <?php if ($n['all']) { echo 'checked'; } ?>>
+                <label for="opds-news-all">All feeds</label>
+                <br>
+                <input type="radio" class="radio" name="opds-news-scope" id="opds-news-some" value="some" <?php if (!$n['all']) { echo 'checked'; } ?>>
+                <label for="opds-news-some">Only the folders and feeds selected below</label>
+            </div>
+        </div>
+
+        <div id="opds-news-tree" class="opds-news-tree">
+            <?php if ($_['newsTree']['folders'] === [] && $_['newsTree']['feeds'] === []): ?>
+                <p class="settings-hint">You have not subscribed to any feeds in News yet.</p>
+            <?php endif; ?>
+            <?php foreach ($_['newsTree']['folders'] as $folder): ?>
+                <div class="opds-news-folder">
+                    <input type="checkbox" class="checkbox opds-news-folder-box" id="opds-news-folder-<?php echo (int)$folder['id']; ?>"
+                           data-folder="<?php echo (int)$folder['id']; ?>" <?php if (in_array($folder['id'], $n['folders'], true)) { echo 'checked'; } ?>>
+                    <label for="opds-news-folder-<?php echo (int)$folder['id']; ?>"><strong><?php echo $e($folder['name']); ?></strong>
+                        <span class="settings-hint">(whole folder, including feeds added later)</span></label>
+                    <ul>
+                        <?php foreach ($folder['feeds'] as $feed): ?>
+                            <li>
+                                <input type="checkbox" class="checkbox opds-news-feed-box" id="opds-news-feed-<?php echo (int)$feed['id']; ?>"
+                                       data-feed="<?php echo (int)$feed['id']; ?>" data-parent="<?php echo (int)$folder['id']; ?>"
+                                       <?php if (in_array($feed['id'], $n['feeds'], true)) { echo 'checked'; } ?>>
+                                <label for="opds-news-feed-<?php echo (int)$feed['id']; ?>"><?php echo $e($feed['title']); ?></label>
+                            </li>
+                        <?php endforeach; ?>
+                        <?php if ($folder['feeds'] === []): ?>
+                            <li class="settings-hint">No feeds in this folder</li>
+                        <?php endif; ?>
+                    </ul>
+                </div>
+            <?php endforeach; ?>
+            <?php if ($_['newsTree']['feeds'] !== []): ?>
+                <div class="opds-news-folder">
+                    <strong><?php echo $_['newsTree']['folders'] === [] ? 'Feeds' : 'Feeds without a folder'; ?></strong>
+                    <ul>
+                        <?php foreach ($_['newsTree']['feeds'] as $feed): ?>
+                            <li>
+                                <input type="checkbox" class="checkbox opds-news-feed-box" id="opds-news-feed-<?php echo (int)$feed['id']; ?>"
+                                       data-feed="<?php echo (int)$feed['id']; ?>"
+                                       <?php if (in_array($feed['id'], $n['feeds'], true)) { echo 'checked'; } ?>>
+                                <label for="opds-news-feed-<?php echo (int)$feed['id']; ?>"><?php echo $e($feed['title']); ?></label>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <div class="opds-actions">
+            <button type="button" id="opds-news-save" class="primary">Save news settings</button>
+            <span id="opds-news-status" class="opds-status" aria-live="polite"></span>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <h3>Index</h3>
     <p>
         <strong><?php p((string)$_['bookCount']); ?></strong> books indexed.

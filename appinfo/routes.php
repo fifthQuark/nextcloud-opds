@@ -19,10 +19,13 @@ return [
         ['name' => 'opds#download', 'url' => '/download/{id}/{name}', 'verb' => 'GET', 'requirements' => ['name' => '.+']],
         ['name' => 'opds#cover', 'url' => '/cover/{id}', 'verb' => 'GET'],
         ['name' => 'opds#thumbnail', 'url' => '/thumb/{id}', 'verb' => 'GET'],
+        ['name' => 'opds#news', 'url' => '/news', 'verb' => 'GET'],
+        ['name' => 'opds#newsDownload', 'url' => '/news/download/{name}', 'verb' => 'GET', 'requirements' => ['name' => '.+']],
 
         // Personal settings (session + CSRF protected, used by the web UI)
         ['name' => 'settings#save', 'url' => '/settings', 'verb' => 'POST'],
         ['name' => 'settings#scan', 'url' => '/settings/scan', 'verb' => 'POST'],
         ['name' => 'settings#reset', 'url' => '/settings/reset', 'verb' => 'POST'],
+        ['name' => 'settings#saveNews', 'url' => '/settings/news', 'verb' => 'POST'],
     ],
 ];

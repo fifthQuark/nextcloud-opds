@@ -16,6 +16,8 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
 * **Covers** are extracted from EPUB, CBZ, MOBI, FB2 and DOCX/ODT files and served as OPDS
   images and thumbnails. PDF covers use Nextcloud's preview generator when the PDF preview
   provider is enabled on the server.
+* **News digest** (optional, needs the [News](https://apps.nextcloud.com/apps/news) app): a
+  *News* entry offers the latest articles of your feeds as an EPUB. See [News digest](#news-digest).
 * The index lives in two database tables and is refreshed incrementally: on catalog requests
   (at most every *n* minutes, with a time budget so requests stay fast), by a background job
   every six hours, from the settings page, or with `occ opds:scan`.
@@ -62,6 +64,8 @@ Aldiko, PocketBook, Foliate, Cantook and Calibre's "Get books" (via an OPDS plug
 | Folders | `/apps/opds/folders?path=/Books/SF` | Sub folders plus the books in that folder |
 | Download | `/apps/opds/download/{fileId}/{filename}` | Streams the file with the right MIME type |
 | Cover / thumbnail | `/apps/opds/cover/{fileId}`, `/apps/opds/thumb/{fileId}` | |
+| News | `/apps/opds/news` | The current news edition (only when News is installed and the digest is on) |
+| News EPUB | `/apps/opds/news/download/{filename}` | Builds the edition, or serves the cached copy |
 
 Parameters accepted by `/books` (and `/search`, `/folders` where they make sense):
 
@@ -74,6 +78,37 @@ Parameters accepted by `/books` (and `/search`, `/folders` where they make sense
 
 Example: `/apps/opds/books?subject=Fantasy&sort=date&order=desc` lists fantasy books, newest
 publication first.
+
+## News digest
+
+When the Nextcloud News app is installed and enabled, the catalog root shows a **News** entry.
+It offers one book, *News – Friday 20 November 2026*, with the latest articles from your feeds:
+
+* each feed is a **part** of the book, each article a **chapter** (title, feed, author, time,
+  the article text and a link to the original);
+* feeds without a folder come first, then folder by folder, alphabetically; articles are
+  newest first;
+* the table of contents is nested (feed → article) in both the EPUB 3 navigation and the
+  EPUB 2 NCX, so older readers show it too.
+
+Settings → Personal → OPDS+ → *News* controls:
+
+| Setting | Choices |
+| --- | --- |
+| Offer the news e-book | on (default) / off |
+| Articles from | last 24 hours (default), today since midnight, last 48 hours, last 7 days |
+| At most | articles per feed, newest first (default 30) |
+| Only unread articles | off by default; nothing is marked as read by downloading |
+| Include images | on by default; images are downloaded by the server, converted to JPEG/PNG/GIF at most 1200 px wide and embedded |
+| Feeds | all feeds, or selected **folders** (including feeds added to them later) and/or individual **feeds** |
+
+The edition only changes when its articles change, and built books are cached in the app
+data folder. When a reader asks for a book that is not built yet, the server spends at most
+about ten seconds on images so that readers do not time out; a background job then completes
+the book every 15 minutes for people who downloaded an edition in the last two weeks.
+Downloaded images are kept for seven days so new editions only fetch new pictures. The server
+fetches images through Nextcloud's HTTP client, which refuses local network addresses unless
+the administrator allowed them.
 
 ## Server-side tools
 

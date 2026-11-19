@@ -137,6 +137,8 @@ class FeedBuilder {
         foreach ($feed['entries'] as $entry) {
             if (($entry['type'] ?? '') === 'book') {
                 $this->bookEntry($w, $entry['book'], $entry);
+            } elseif (($entry['type'] ?? '') === 'publication') {
+                $this->publicationEntry($w, $entry);
             } else {
                 $this->navEntry($w, $entry);
             }
@@ -257,6 +259,45 @@ class FeedBuilder {
         foreach ($entry['related'] ?? [] as $related) {
             $this->link($w, 'related', $related['href'], self::TYPE_ACQ, $related['title']);
         }
+        $w->endElement();
+    }
+
+    /**
+     * A generated publication that is not a file in the library (the news edition).
+     *
+     * @param array<string,mixed> $entry id, title, updated, author, summary, language, issued,
+     *        categories (string[]), download, mime, size
+     */
+    private function publicationEntry(\XMLWriter $w, array $entry): void {
+        $w->startElement('entry');
+        $w->writeElement('title', (string)$entry['title']);
+        $w->writeElement('id', (string)$entry['id']);
+        $w->writeElement('updated', $this->date((int)$entry['updated']));
+        if (!empty($entry['author'])) {
+            $w->startElement('author');
+            $w->writeElement('name', (string)$entry['author']);
+            $w->endElement();
+        }
+        if (!empty($entry['language'])) {
+            $w->writeElementNs('dc', 'language', null, (string)$entry['language']);
+        }
+        if (!empty($entry['issued'])) {
+            $w->writeElementNs('dc', 'issued', null, (string)$entry['issued']);
+        }
+        foreach ($entry['categories'] ?? [] as $category) {
+            $w->startElement('category');
+            $w->writeAttribute('term', (string)$category);
+            $w->writeAttribute('label', (string)$category);
+            $w->endElement();
+        }
+        if (!empty($entry['summary'])) {
+            $w->startElement('summary');
+            $w->writeAttribute('type', 'text');
+            $w->text((string)$entry['summary']);
+            $w->endElement();
+        }
+        $label = 'Download ' . strtoupper((string)($entry['format'] ?? 'epub')) . (!empty($entry['size']) ? ' (' . $this->size((int)$entry['size']) . ')' : '');
+        $this->link($w, 'http://opds-spec.org/acquisition', (string)$entry['download'], (string)$entry['mime'], $label);
         $w->endElement();
     }
 
