@@ -23,7 +23,7 @@ jobs:
       APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Read app id and version
         id: app
