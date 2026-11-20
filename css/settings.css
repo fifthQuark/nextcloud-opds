@@ -1,3 +1,10 @@
+/* Nextcloud hides .checkbox/.radio inputs with position:absolute; left:-10000px. Without a
+   positioned ancestor inside the scrolling settings area their containing block is the fixed
+   #content-vue, so clicking a label made Firefox scroll that whole container to the input and
+   the screen went blank. Anchoring them to this section keeps them next to their labels. */
+#opds-settings {
+    position: relative;
+}
 #opds-settings .opds-grid {
     display: grid;
     grid-template-columns: minmax(180px, max-content) 1fr;

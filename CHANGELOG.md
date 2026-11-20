@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 – 2026-11-20
+
+* Fixed the screen going blank in Firefox when ticking a checkbox in the lower part of the
+  settings page (for example *Include images* in the News section).
+
 ## 1.1.0 – 2026-11-20
 
 * News digest: when the Nextcloud News app is installed, the catalog gets a *News* entry that
