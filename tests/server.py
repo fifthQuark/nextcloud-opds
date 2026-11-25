@@ -1,5 +1,6 @@
 """A throwaway Nextcloud in a container (docker or podman)."""
 import base64
+import http.cookiejar
 import json
 import os
 import re
@@ -31,6 +32,8 @@ class Server:
         self.name = 'opds-test-' + uuid.uuid4().hex[:8]
         self.database = database
         self.started = []
+        self.token = None
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             self.port = s.getsockname()[1]
@@ -146,15 +149,19 @@ class Server:
     # ------------------------------------------------------------------ app
 
     def request(self, path, body=None, method=None, headers=None, raw=None):
-        headers = dict({'OCS-APIRequest': 'true', 'Accept': '*/*',
-                        'Authorization': 'Basic ' + base64.b64encode((USER + ':' + PASSWORD).encode()).decode()}, **(headers or {}))
+        auth = {'OCS-APIRequest': 'true', 'Accept': '*/*', 'Authorization': 'Basic ' + base64.b64encode((USER + ':' + PASSWORD).encode()).decode()}
+        if self.token is None:
+            # Nextcloud 28 asks for the token of the session like a browser, later versions take the header above
+            with self.opener.open(urllib.request.Request('http://127.0.0.1:%d/index.php/csrftoken' % self.port, headers=auth), timeout=60) as response:
+                self.token = json.loads(response.read().decode())['token']
+        headers = dict(auth, requesttoken=self.token, **(headers or {}))
         data = raw
         if body is not None:
             data = json.dumps(body).encode()
             headers['Content-Type'] = 'application/json'
         request = urllib.request.Request('http://127.0.0.1:%d/index.php/apps/opds%s' % (self.port, path), data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=300) as response:
+            with self.opener.open(request, timeout=300) as response:
                 return response.status, response.read(), response.headers
         except urllib.error.HTTPError as e:
             with e:
