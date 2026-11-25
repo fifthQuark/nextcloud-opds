@@ -113,6 +113,134 @@
         }
     });
 
+    // ------------------------------------------------------ calibre libraries
+    const calibreBox = $('opds-calibre-enabled');
+    if (calibreBox) {
+        const status = $('opds-calibre-status');
+        const listNode = $('opds-calibre-list');
+        const useButton = $('opds-calibre-use');
+        let created = '';
+
+        const node = (tag, text) => {
+            const n = document.createElement(tag);
+            n.textContent = text || '';
+            return n;
+        };
+
+        const drawLibraries = async () => {
+            listNode.replaceChildren();
+            let data;
+            try {
+                const response = await fetch(url('/api/calibre'), { headers: { requesttoken: OC.requestToken, Accept: 'application/json' } });
+                data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'HTTP ' + response.status);
+                }
+            } catch (e) {
+                setStatus(status, e.message, 'error');
+                return;
+            }
+            if (data.libraries.length === 0) {
+                listNode.append(node('p', 'There is no Calibre library in the library folder.'));
+                return;
+            }
+            for (const library of data.libraries) {
+                const p = node('p');
+                p.append(node('strong', library.path), ' – ' + library.books + (library.books === 1 ? ' book' : ' books'));
+                if (library.problem) {
+                    p.append(node('br'), node('span', 'Cannot be edited: ' + library.problem));
+                }
+                listNode.append(p);
+                if (library.backups.length) {
+                    const details = node('details');
+                    details.append(node('summary', 'Backups of metadata.db made before editing'));
+                    const ul = node('ul');
+                    for (const b of library.backups) {
+                        const a = node('a', new Date(b.time * 1000).toLocaleString());
+                        a.href = url('/api/calibre/backup') + '?' + new URLSearchParams({ library: library.path, name: b.name });
+                        a.style.textDecoration = 'underline';
+                        const li = node('li');
+                        li.append(a, ' (' + Math.max(1, Math.round(b.size / 1024)) + ' KB)');
+                        ul.append(li);
+                    }
+                    details.append(ul, node('p', 'Folders renamed since a backup was made are not renamed back. If Calibre reports missing books after using one, choose Library maintenance → Restore database in Calibre, which rebuilds everything from the metadata.opf files.'));
+                    listNode.append(details);
+                }
+            }
+        };
+
+        calibreBox.addEventListener('change', async () => {
+            calibreBox.disabled = true;
+            setStatus(status, 'Saving…');
+            try {
+                await post('/settings/calibre', { enabled: calibreBox.checked });
+                $('opds-calibre-more').hidden = !calibreBox.checked;
+                setStatus(status, calibreBox.checked ? 'Turned on' : 'Turned off', 'ok');
+                if (calibreBox.checked) {
+                    await drawLibraries();
+                }
+            } catch (e) {
+                calibreBox.checked = !calibreBox.checked;
+                setStatus(status, e.message, 'error');
+            } finally {
+                calibreBox.disabled = false;
+            }
+        });
+
+        $('opds-calibre-create').addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            setStatus(status, 'Creating the library…');
+            try {
+                if (created === '') {
+                    created = (await post('/api/calibre', { path: $('opds-calibre-path').value })).path;
+                    $('opds-calibre-path').disabled = true;
+                }
+                let after = '';
+                let added = 0;
+                let skipped = 0;
+                const failed = [];
+                let result;
+                do {
+                    result = await post('/api/calibre/import', { path: created, after: after });
+                    after = result.last || after;
+                    added += result.added;
+                    skipped += result.skipped;
+                    failed.push(...result.failed);
+                    setStatus(status, 'Copying books: ' + result.processed + ' of ' + result.total);
+                } while (!result.done);
+                setStatus(status, added + ' books copied to ' + created
+                    + (skipped ? ', ' + skipped + ' skipped (already there or file missing)' : '')
+                    + (failed.length ? ', ' + failed.length + ' failed: ' + failed.slice(0, 10).join(', ') : ''), failed.length ? 'error' : 'ok');
+                useButton.hidden = false;
+            } catch (e) {
+                setStatus(status, e.message + (created ? ' Press the button again to continue.' : ''), 'error');
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+        useButton.addEventListener('click', async () => {
+            useButton.disabled = true;
+            try {
+                const data = await post('/api/calibre/use', { path: created });
+                $('opds-root').value = data.root;
+                useButton.hidden = true;
+                await runScan(false);
+                setStatus(status, data.root + ' is now the library folder', 'ok');
+                await drawLibraries();
+            } catch (e) {
+                setStatus(status, e.message, 'error');
+            } finally {
+                useButton.disabled = false;
+            }
+        });
+
+        if (calibreBox.checked) {
+            drawLibraries();
+        }
+    }
+
     // ------------------------------------------------------------ news digest
     const news = $('opds-news');
     if (news) {

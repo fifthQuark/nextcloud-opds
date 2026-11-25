@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\Opds\Settings;
 
 use OCA\Opds\AppInfo\Application;
+use OCA\Opds\Calibre\Sqlite;
 use OCA\Opds\Db\BookRepository;
 use OCA\Opds\News\NewsService;
 use OCA\Opds\Service\Config;
@@ -52,6 +53,9 @@ class Personal implements ISettings {
             'sorts' => Config::SORTS,
             'feedUrl' => $this->urlGenerator->linkToRouteAbsolute('opds.opds.root'),
             'appPasswordUrl' => $this->urlGenerator->linkToRouteAbsolute('settings.PersonalSettings.index', ['section' => 'security']),
+            'libraryUrl' => $this->urlGenerator->linkToRoute('opds.library.index'),
+            'calibre' => $this->config->isCalibreEnabled($uid) && Sqlite::available(),
+            'calibreAvailable' => Sqlite::available(),
             'bookCount' => $this->repository->count($uid),
             'lastScan' => $this->config->getLastScan($uid),
             'report' => $report,

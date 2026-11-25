@@ -572,8 +572,8 @@ class OpdsController extends Controller {
             'type' => 'book',
             'book' => $book,
             'download' => $this->feeds->route('download', ['id' => $book->fileId, 'name' => $name]),
-            'cover' => $this->feeds->route('cover', ['id' => $book->fileId]) . '?v=' . substr($book->etag, 0, 8),
-            'thumbnail' => $this->feeds->route('thumbnail', ['id' => $book->fileId]) . '?v=' . substr($book->etag, 0, 8),
+            'cover' => $this->feeds->route('cover', ['id' => $book->fileId]) . '?v=' . $book->coverVersion(),
+            'thumbnail' => $this->feeds->route('thumbnail', ['id' => $book->fileId]) . '?v=' . $book->coverVersion(),
             'related' => $related,
         ];
     }
@@ -663,7 +663,7 @@ class OpdsController extends Controller {
         if ($stored !== null) {
             $data = $stored->getContent();
             $mime = \OCA\Opds\Metadata\Text::sniffImageMime($data) ?: 'image/jpeg';
-            return $this->imageResponse($data, $mime, $book->etag);
+            return $this->imageResponse($data, $mime, $book->coverVersion() . ($thumbnail ? 't' : 'c'));
         }
         // Fall back to Nextcloud's own preview generator (PDF, images, ...)
         $file = $this->fileOf($uid, $book);
@@ -672,7 +672,7 @@ class OpdsController extends Controller {
                 if ($this->preview->isAvailable($file)) {
                     [$w, $h] = $thumbnail ? [320, 480] : [1000, 1500];
                     $preview = $this->preview->getPreview($file, $w, $h, false);
-                    return $this->imageResponse($preview->getContent(), $preview->getMimeType() ?: 'image/jpeg', $book->etag);
+                    return $this->imageResponse($preview->getContent(), $preview->getMimeType() ?: 'image/jpeg', $book->coverVersion() . ($thumbnail ? 't' : 'c'));
                 }
             } catch (\Throwable $e) {
                 $this->logger->debug('OPDS: preview failed for ' . $book->path . ': ' . $e->getMessage(), ['app' => Application::APP_ID]);

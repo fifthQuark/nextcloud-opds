@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 – unreleased
+
+* Book browser: an *OPDS+* entry in the app menu shows the library with covers, search, sorting and
+  lists of authors (with their series), series, genres, publishers, languages, years and formats.
+* Beta, off by default: use and edit Calibre libraries (`metadata.db`). Titles, authors, series,
+  tags, covers and more can be changed in the book browser; folders and files are renamed the way
+  Calibre does. A new Calibre library can be made from the catalog by copying its books.
+* Books that were moved or renamed show their new folder after the next scan.
+* Books in Calibre's trash folder (`.caltrash`) are no longer listed.
+
 ## 1.2.0 – 2026-11-25
 
 * Books with several authors are listed under each of them, also when the file names them in a

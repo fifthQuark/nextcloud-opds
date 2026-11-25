@@ -19,6 +19,9 @@ class BookRepository {
     public const AUTHOR_SEPARATOR = ' & ';
     public const SUBJECT_SEPARATOR = '; ';
 
+    /** Formats in the order they are offered when a book exists in several */
+    private const FORMAT_ORDER = ['epub', 'kepub', 'azw3', 'azw', 'mobi', 'fb2', 'pdf', 'cbz', 'cbr', 'djvu'];
+
     public function __construct(
         private IDBConnection $db,
     ) {
@@ -38,15 +41,15 @@ class BookRepository {
         return $row ? $this->hydrate($row) : null;
     }
 
-    /** @return array<int,string> file id => etag of every indexed book of the user */
-    public function getEtags(string $uid): array {
+    /** @return array<int,array{etag: string, path: string, rev: string}> keyed by file id */
+    public function getStates(string $uid): array {
         $qb = $this->db->getQueryBuilder();
-        $qb->select('file_id', 'etag')->from(self::TABLE)
+        $qb->select('file_id', 'etag', 'path', 'meta_rev')->from(self::TABLE)
             ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($uid)));
         $result = $qb->executeQuery();
         $map = [];
         while ($row = $result->fetch()) {
-            $map[(int)$row['file_id']] = (string)$row['etag'];
+            $map[(int)$row['file_id']] = ['etag' => (string)$row['etag'], 'path' => (string)$row['path'], 'rev' => (string)$row['meta_rev']];
         }
         $result->closeCursor();
         return $map;
@@ -87,6 +90,169 @@ class BookRepository {
         $result->closeCursor();
 
         return ['books' => $books, 'total' => $total];
+    }
+
+    /**
+     * Like listBooks(), but one result per book instead of one per file: each
+     * entry holds the files (formats) of one book, the preferred format first.
+     *
+     * @return array{works: list<non-empty-list<Book>>, total: int}
+     */
+    public function listWorks(string $uid, BookFilter $filter, string $sort, string $order, int $limit, int $offset): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectAlias($qb->createFunction('COUNT(DISTINCT ' . $qb->getColumnName('b.work') . ')'), 'cnt')->from(self::TABLE, 'b');
+        $this->applyFilter($qb, $uid, $filter);
+        $result = $qb->executeQuery();
+        $total = (int)$result->fetchOne();
+        $result->closeCursor();
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('b.work')->from(self::TABLE, 'b');
+        $this->applyFilter($qb, $uid, $filter);
+        $i = 0;
+        foreach ($this->sortColumns($sort, $order) as $column => $dir) {
+            $alias = 'sort' . $i++;
+            $qb->selectAlias($dir === 'DESC' ? $qb->func()->max('b.' . $column) : $qb->func()->min('b.' . $column), $alias);
+            $qb->addOrderBy($alias, $dir);
+        }
+        $qb->groupBy('b.work')->addOrderBy('b.work', 'ASC');
+        $qb->setMaxResults($limit)->setFirstResult($offset);
+        $result = $qb->executeQuery();
+        $keys = array_map('strval', array_column($result->fetchAll(), 'work'));
+        $result->closeCursor();
+        $works = $this->findWorks($uid, $keys);
+        return ['works' => array_values(array_filter(array_map(static fn (string $k): array => $works[$k] ?? [], $keys))), 'total' => $total];
+    }
+
+    /**
+     * @param string[] $keys
+     * @return array<string,non-empty-list<Book>> files of each work, the preferred format first
+     */
+    public function findWorks(string $uid, array $keys): array {
+        $works = [];
+        foreach (array_chunk($keys, 500) as $chunk) {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('*')->from(self::TABLE)
+                ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($uid)))
+                ->andWhere($qb->expr()->in('work', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_STR_ARRAY)));
+            $result = $qb->executeQuery();
+            while ($row = $result->fetch()) {
+                $works[(string)$row['work']][] = $this->hydrate($row);
+            }
+            $result->closeCursor();
+        }
+        $rank = static function (Book $b): int {
+            $at = array_search($b->format, self::FORMAT_ORDER, true);
+            return $at === false ? count(self::FORMAT_ORDER) : $at;
+        };
+        foreach ($works as &$books) {
+            usort($books, static fn (Book $a, Book $b): int => [$rank($a), $a->name, $a->id] <=> [$rank($b), $b->name, $b->id]);
+        }
+        return $works;
+    }
+
+    /** @return list<string> keys of all works in the order they were first indexed */
+    public function listWorkKeys(string $uid): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('work')->selectAlias($qb->func()->min('id'), 'first_id')->from(self::TABLE)
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($uid)))
+            ->groupBy('work')->orderBy('first_id', 'ASC');
+        $result = $qb->executeQuery();
+        $keys = array_map('strval', array_column($result->fetchAll(), 'work'));
+        $result->closeCursor();
+        return $keys;
+    }
+
+    public function countWorks(string $uid): int {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectAlias($qb->createFunction('COUNT(DISTINCT ' . $qb->getColumnName('work') . ')'), 'cnt')->from(self::TABLE)
+            ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($uid)));
+        $result = $qb->executeQuery();
+        $count = (int)$result->fetchOne();
+        $result->closeCursor();
+        return $count;
+    }
+
+    /**
+     * Values to browse by, with the number of books (not files) and up to three
+     * books whose covers can illustrate the entry.
+     *
+     * @return list<array{value: string, sort: string, count: int, covers: list<Book>}>
+     */
+    public function browse(string $uid, string $kind, ?BookFilter $filter = null): array {
+        $isTerm = in_array($kind, ['author', 'subject'], true);
+        if (!$isTerm && !in_array($kind, ['publisher', 'series', 'language', 'format', 'pubyear'], true)) {
+            throw new \InvalidArgumentException('Unsupported kind ' . $kind);
+        }
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('b.work', 'b.file_id', 'b.etag', 'b.meta_rev', 'b.has_cover')->from(self::TABLE, 'b');
+        $this->applyFilter($qb, $uid, $filter ?? new BookFilter());
+        if ($isTerm) {
+            $qb->selectAlias('bt.value', 'val')->selectAlias('bt.value_sort', 'val_sort')
+                ->innerJoin('b', self::TERMS, 'bt', $qb->expr()->andX(
+                    $qb->expr()->eq('bt.book_id', 'b.id'),
+                    $qb->expr()->eq('bt.kind', $qb->createNamedParameter($kind))
+                ));
+        } else {
+            $qb->selectAlias('b.' . $kind, 'val');
+        }
+        $qb->addOrderBy('b.series', 'ASC')->addOrderBy('b.series_index', 'ASC')->addOrderBy('b.title_sort', 'ASC');
+
+        $groups = [];
+        $result = $qb->executeQuery();
+        while ($row = $result->fetch()) {
+            $value = (string)$row['val'];
+            if ($value === '' || ($kind === 'pubyear' && (int)$value <= 0)) {
+                continue;
+            }
+            $work = (string)$row['work'];
+            $groups[$value] ??= ['value' => $value, 'sort' => $isTerm ? (string)$row['val_sort'] : Sorting::titleSortKey($value), 'works' => [], 'covers' => []];
+            $group = &$groups[$value];
+            $group['works'][$work] = true;
+            if ((int)$row['has_cover'] === 1 && count($group['covers']) < 3 && !isset($group['covers'][$work])) {
+                $cover = new Book();
+                $cover->fileId = (int)$row['file_id'];
+                $cover->etag = (string)$row['etag'];
+                $cover->metaRev = (string)$row['meta_rev'];
+                $group['covers'][$work] = $cover;
+            }
+            unset($group);
+        }
+        $result->closeCursor();
+        $out = [];
+        foreach ($groups as $g) {
+            $out[] = ['value' => $g['value'], 'sort' => $g['sort'], 'count' => count($g['works']), 'covers' => array_values($g['covers'])];
+        }
+        usort($out, static fn (array $a, array $b): int => $kind === 'pubyear'
+            ? (int)$b['value'] <=> (int)$a['value']
+            : [$a['sort'], $a['value']] <=> [$b['sort'], $b['value']]);
+        return $out;
+    }
+
+    /** Fills the "work" column of books indexed before it existed. Returns the number of changed books. */
+    public function fillWorks(): int {
+        $changed = 0;
+        do {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('id', 'parent', 'name')->from(self::TABLE)
+                ->where($qb->expr()->isNull('work'))
+                ->setMaxResults(500);
+            $result = $qb->executeQuery();
+            $rows = $result->fetchAll();
+            $result->closeCursor();
+            foreach ($rows as $row) {
+                $book = new Book();
+                $book->parent = (string)$row['parent'];
+                $book->name = (string)$row['name'];
+                $qb = $this->db->getQueryBuilder();
+                $qb->update(self::TABLE)
+                    ->set('work', $qb->createNamedParameter($book->work()))
+                    ->where($qb->expr()->eq('id', $qb->createNamedParameter((int)$row['id'], IQueryBuilder::PARAM_INT)));
+                $qb->executeStatement();
+                $changed++;
+            }
+        } while (count($rows) === 500);
+        return $changed;
     }
 
     /**
@@ -433,6 +599,14 @@ class BookRepository {
     }
 
     private function applySort(IQueryBuilder $qb, string $sort, string $order): void {
+        foreach ($this->sortColumns($sort, $order) as $column => $dir) {
+            $qb->addOrderBy('b.' . $column, $dir);
+        }
+        $qb->addOrderBy('b.id', 'ASC');
+    }
+
+    /** @return array<string,string> column => direction */
+    private function sortColumns(string $sort, string $order): array {
         $dir = strtolower($order) === 'desc' ? 'DESC' : 'ASC';
         $columns = match ($sort) {
             'author' => ['author_sort', 'series', 'series_index', 'title_sort'],
@@ -446,13 +620,14 @@ class BookRepository {
             'size' => ['size', 'title_sort'],
             default => ['title_sort', 'author_sort'],
         };
+        $out = [];
         foreach ($columns as $i => $column) {
             // Secondary keys keep a natural ascending order regardless of direction,
             // except where they belong to the primary key (series index).
             $colDir = ($i === 0 || ($sort === 'series' && $column === 'series_index') || ($sort === 'author' && $column !== 'title_sort')) ? $dir : 'ASC';
-            $qb->addOrderBy('b.' . $column, $colDir);
+            $out[$column] = $colDir;
         }
-        $qb->addOrderBy('b.id', 'ASC');
+        return $out;
     }
 
     private function applyLetter(IQueryBuilder $qb, string $column, ?string $letter): void {
@@ -502,6 +677,7 @@ class BookRepository {
         $b->isbn = (string)$row['isbn'];
         $b->hasCover = (int)$row['has_cover'] === 1;
         $b->indexedAt = (int)$row['indexed_at'];
+        $b->metaRev = (string)($row['meta_rev'] ?? '');
         return $b;
     }
 
@@ -536,6 +712,8 @@ class BookRepository {
             'isbn' => [self::truncate($b->isbn, 64), $s],
             'has_cover' => [$b->hasCover ? 1 : 0, $i],
             'indexed_at' => [$b->indexedAt, $i],
+            'work' => [$b->work(), $s],
+            'meta_rev' => [self::truncate($b->metaRev, 64), $s],
         ];
     }
 

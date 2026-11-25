@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace OCA\Opds\Db;
 
+use OCA\Opds\Metadata\FilenameExtractor;
+
 /**
  * Plain data holder for one indexed book. Filled by the metadata extractors
  * and persisted by BookRepository.
@@ -43,6 +45,18 @@ class Book {
     public string $isbn = '';
     public bool $hasCover = false;
     public int $indexedAt = 0;
+    /** Revision of the Calibre record the metadata came from, '' for metadata read from the file */
+    public string $metaRev = '';
+
+    /** Same value for the files of one book in different formats ("Emma.epub", "Emma.pdf"). */
+    public function work(): string {
+        return sha1($this->parent . '/' . mb_strtolower(FilenameExtractor::stripExtension($this->name)));
+    }
+
+    /** Changes whenever the cover may look different; used to bypass browser caches. */
+    public function coverVersion(): string {
+        return substr(sha1($this->etag . '/' . $this->metaRev), 0, 10);
+    }
 
     public function authorString(): string {
         return implode(', ', $this->authors);

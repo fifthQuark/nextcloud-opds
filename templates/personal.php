@@ -12,6 +12,8 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
         Serve a folder of e-books as an OPDS catalog that reader apps (KOReader, Moon+ Reader, Thorium, Librera, Aldiko, Foliate …) can browse, sort, search and download from.
     </p>
 
+    <p><a class="button" href="<?php echo $e($_['libraryUrl']); ?>">Open the book browser</a></p>
+
     <div class="opds-feed-box">
         <label for="opds-feed-url"><strong>Catalog address</strong></label>
         <div class="opds-row">
@@ -178,6 +180,37 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
         </div>
     </div>
     <?php endif; ?>
+
+    <div id="opds-calibre" data-enabled="<?php echo $_['calibre'] ? '1' : '0'; ?>">
+        <h3>Calibre libraries <span class="opds-beta">Beta</span></h3>
+        <p class="settings-hint">
+            For folders with a Calibre database (<code>metadata.db</code>): use what Calibre knows about the books, and edit titles,
+            authors, series, tags, covers and more in the book browser. Edits change <code>metadata.db</code> and rename the folders
+            and files of the book the way Calibre does. Close Calibre and let your files synchronise before editing here.
+        </p>
+        <?php if (!$_['calibreAvailable']): ?>
+            <p class="settings-hint">Not available: this server has no SQLite support for PHP (sqlite3 or pdo_sqlite).</p>
+        <?php else: ?>
+        <p>
+            <input type="checkbox" class="checkbox" id="opds-calibre-enabled" <?php if ($_['calibre']) { echo 'checked'; } ?>>
+            <label for="opds-calibre-enabled">Use and edit Calibre libraries</label>
+        </p>
+        <div id="opds-calibre-more" <?php if (!$_['calibre']) { echo 'hidden'; } ?>>
+            <div id="opds-calibre-list"></div>
+            <h4>New Calibre library from this catalog</h4>
+            <p class="settings-hint">
+                Copies all books of the current library folder into a new folder with a Calibre database, sorted into
+                <em>Author/Title</em> folders. The originals are not changed, so this needs the same space once more.
+            </p>
+            <div class="opds-row">
+                <input type="text" id="opds-calibre-path" placeholder="/Calibre Library" aria-label="Folder for the new library">
+                <button type="button" id="opds-calibre-create">Create and copy books</button>
+            </div>
+        </div>
+        <p><span id="opds-calibre-status" class="opds-status" aria-live="polite"></span></p>
+        <button type="button" id="opds-calibre-use" hidden>Use the new library from now on</button>
+        <?php endif; ?>
+    </div>
 
     <h3>Index</h3>
     <p>

@@ -206,6 +206,19 @@ class Config {
         return str_replace('_', '-', $lang !== '' ? $lang : 'en');
     }
 
+    /** Beta: use and edit the metadata of Calibre libraries. */
+    public function isCalibreEnabled(string $uid): bool {
+        return $this->config->getUserValue($uid, Application::APP_ID, 'calibre_beta', '0') === '1';
+    }
+
+    public function setCalibreEnabled(string $uid, bool $enabled): void {
+        $this->config->setUserValue($uid, Application::APP_ID, 'calibre_beta', $enabled ? '1' : '0');
+    }
+
+    public function setRoot(string $uid, string $root): void {
+        $this->config->setUserValue($uid, Application::APP_ID, 'root', $root);
+    }
+
     public function isConfigured(string $uid): bool {
         return $this->config->getUserValue($uid, Application::APP_ID, 'root', '') !== '';
     }

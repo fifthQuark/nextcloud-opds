@@ -5,10 +5,17 @@ declare(strict_types=1);
 namespace OCA\Opds\Service;
 
 use OCA\Opds\AppInfo\Application;
+use OCA\Opds\Calibre\CalibreDb;
+use OCA\Opds\Calibre\CalibreLibrary;
+use OCA\Opds\Calibre\CalibreReader;
+use OCA\Opds\Calibre\Languages;
+use OCA\Opds\Calibre\Sqlite;
 use OCA\Opds\Db\Book;
 use OCA\Opds\Db\BookRepository;
+use OCA\Opds\Db\Sorting;
 use OCA\Opds\Metadata\FilenameExtractor;
 use OCA\Opds\Metadata\MetadataExtractor;
+use OCA\Opds\Metadata\Text;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -27,6 +34,7 @@ class LibraryScanner {
         private BookRepository $repository,
         private MetadataExtractor $extractor,
         private CoverService $covers,
+        private CalibreLibrary $calibre,
         private IPreview $preview,
         private ITimeFactory $time,
         private LoggerInterface $logger,
@@ -43,6 +51,7 @@ class LibraryScanner {
         $result = new ScanResult();
         $start = microtime(true);
         $now = $this->time->getTime();
+        $readers = [];
 
         try {
             $userFolder = $this->rootFolder->getUserFolder($uid);
@@ -60,7 +69,11 @@ class LibraryScanner {
 
             $files = $this->collectFiles($root, $this->config->getExtensions($uid));
             $result->total = count($files);
-            $existing = $this->repository->getEtags($uid);
+            $existing = $this->repository->getStates($uid);
+            $failed = [];
+            if ($this->config->isCalibreEnabled($uid) && Sqlite::available()) {
+                $readers = $this->calibre->openAll($uid, $failed);
+            }
             $pattern = $this->config->getFilenamePattern($uid);
 
             $seen = [];
@@ -68,7 +81,15 @@ class LibraryScanner {
                 $fileId = $file->getId();
                 $seen[$fileId] = true;
                 $isNew = !isset($existing[$fileId]);
-                if (!$isNew && !$full && $existing[$fileId] === $file->getEtag()) {
+                $path = $userFolder->getRelativePath($file->getPath()) ?? $file->getPath();
+                [$reader, $calibreId] = $this->calibreBook($readers, $file);
+                $rev = $reader !== null ? $reader->revision($calibreId) : '';
+                if (!$isNew && $reader === null && $existing[$fileId]['rev'] !== '' && $this->isBelow($file, $failed)) {
+                    // Keep what is known until the library can be read again
+                    $result->unchanged++;
+                    continue;
+                }
+                if (!$isNew && !$full && $existing[$fileId] === ['etag' => $file->getEtag(), 'path' => $path, 'rev' => $rev]) {
                     $result->unchanged++;
                     continue;
                 }
@@ -77,7 +98,7 @@ class LibraryScanner {
                     continue;
                 }
                 try {
-                    $this->index($uid, $userFolder->getRelativePath($file->getPath()) ?? $file->getPath(), $file, $pattern, $now);
+                    $this->index($uid, $path, $file, $pattern, $now, $reader?->library, $reader?->record($calibreId));
                     $isNew ? $result->added++ : $result->updated++;
                 } catch (\Throwable $e) {
                     $result->errors++;
@@ -96,9 +117,37 @@ class LibraryScanner {
         } catch (\Throwable $e) {
             $result->error = 'Scan failed: ' . $e->getMessage();
             $this->logger->error('OPDS: scan failed for ' . $uid, ['app' => Application::APP_ID, 'exception' => $e]);
+        } finally {
+            foreach ($readers as $reader) {
+                $reader->close();
+            }
         }
 
         return $this->finish($uid, $result, $start, $now);
+    }
+
+    /** Brings the index up to date after a book of a Calibre library was edited. */
+    public function refreshCalibreBook(string $uid, Folder $library, int $id): void {
+        $record = $this->calibre->read($uid, $library, static fn (CalibreDb $db): ?array => $db->get($id));
+        if ($record === null || $record['path'] === '') {
+            return;
+        }
+        $userFolder = $this->rootFolder->getUserFolder($uid);
+        $folder = $library->get($record['path']);
+        if (!$folder instanceof Folder) {
+            return;
+        }
+        $extensions = $this->config->getExtensions($uid);
+        $wanted = [];
+        foreach ($record['formats'] as $format => $name) {
+            $wanted[CalibreDb::pathKey($name . '.' . $format)] = true;
+        }
+        foreach ($folder->getDirectoryListing() as $file) {
+            if ($file instanceof File && isset($wanted[CalibreDb::pathKey($file->getName())])
+                && in_array(FilenameExtractor::format($file->getName()), $extensions, true)) {
+                $this->index($uid, $userFolder->getRelativePath($file->getPath()) ?? $file->getPath(), $file, '', $this->time->getTime(), $library, $record);
+            }
+        }
     }
 
     /** Run a scan if the configured interval has passed since the last one. */
@@ -132,7 +181,8 @@ class LibraryScanner {
                 if (!$node instanceof File) {
                     continue;
                 }
-                if (FilenameExtractor::format($node->getName()) !== $ext) {
+                // .caltrash holds books deleted in Calibre
+                if (FilenameExtractor::format($node->getName()) !== $ext || str_contains($node->getPath(), '/.caltrash/')) {
                     continue;
                 }
                 $files[$node->getId()] = $node;
@@ -142,7 +192,8 @@ class LibraryScanner {
         return array_values($files);
     }
 
-    private function index(string $uid, string $relativePath, File $file, string $pattern, int $now): void {
+    /** @param array<string,mixed>|null $record what Calibre knows about the book */
+    private function index(string $uid, string $relativePath, File $file, string $pattern, int $now, ?Folder $library = null, ?array $record = null): void {
         $book = $this->repository->findByFileId($uid, $file->getId()) ?? new Book();
         $book->userId = $uid;
         $book->fileId = $file->getId();
@@ -161,6 +212,12 @@ class LibraryScanner {
             $book->indexedAt = $now;
         }
 
+        if ($library !== null && $record !== null) {
+            $this->applyCalibre($uid, $book, $library, $record);
+            $this->repository->save($book);
+            return;
+        }
+        $book->metaRev = '';
         $meta = $this->extractor->read($file, $pattern);
         $this->extractor->apply($book, $meta);
 
@@ -173,6 +230,62 @@ class LibraryScanner {
         }
 
         $this->repository->save($book);
+    }
+
+    /** @param list<string> $folders */
+    private function isBelow(File $file, array $folders): bool {
+        foreach ($folders as $folder) {
+            if (str_starts_with($file->getPath(), $folder)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @param list<CalibreReader> $readers
+     * @return array{0: ?CalibreReader, 1: int}
+     */
+    private function calibreBook(array $readers, File $file): array {
+        foreach ($readers as $reader) {
+            $id = $reader->bookId($file);
+            if ($id > 0) {
+                return [$reader, $id];
+            }
+        }
+        return [null, 0];
+    }
+
+    /**
+     * What Calibre knows about a book replaces the metadata inside the file.
+     *
+     * @param array<string,mixed> $record
+     */
+    private function applyCalibre(string $uid, Book $book, Folder $library, array $record): void {
+        $book->title = $record['title'];
+        $book->titleSort = Sorting::titleSortKey($record['sort'] !== '' ? $record['sort'] : $record['title']);
+        $book->titleLetter = Sorting::letterOf($book->titleSort);
+        $book->authors = $record['authors'] === ['Unknown'] ? [] : $record['authors'];
+        $book->authorSort = $book->authors !== [] ? Sorting::fold($record['author_sort']) : '';
+        $book->publisher = $record['publisher'];
+        $book->series = $record['series'];
+        $book->seriesIndex = $record['series_index'];
+        $book->subjects = $record['tags'];
+        $book->language = Languages::fromCalibre($record['languages'][0] ?? '');
+        $book->pubdate = $record['pubdate'];
+        $book->pubyear = $book->pubdate !== '' ? (int)substr($book->pubdate, 0, 4) : 0;
+        $book->description = Text::plain($record['comments']);
+        $book->isbn = $record['identifiers']['isbn'] ?? '';
+        $book->metaRev = $record['rev'];
+        $added = strtotime($record['timestamp']);
+        if ($added !== false && $added > 0) {
+            $book->indexedAt = $added;
+        }
+        $cover = $this->calibre->coverFile($library, $record);
+        $book->hasCover = $cover !== null && $this->covers->store($uid, $book->fileId, $cover->getContent());
+        if (!$book->hasCover) {
+            $this->covers->delete($uid, $book->fileId);
+        }
     }
 
     private function previewAvailable(File $file): bool {

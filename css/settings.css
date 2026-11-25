@@ -87,3 +87,23 @@
     opacity: 0.5;
     pointer-events: none;
 }
+
+.opds-beta {
+    display: inline-block;
+    padding: 1px 8px;
+    border: 1px solid var(--color-border-dark);
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-maxcontrast);
+    vertical-align: middle;
+}
+
+#opds-calibre [hidden],
+#opds-calibre-use[hidden] {
+    display: none !important;
+}
+
+#opds-calibre-list ul {
+    margin: 4px 0 12px;
+}

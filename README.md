@@ -18,6 +18,10 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
   provider is enabled on the server.
 * **News digest** (optional, needs the [News](https://apps.nextcloud.com/apps/news) app): a
   *News* entry offers the latest articles of your feeds as an EPUB. See [News digest](#news-digest).
+* **Book browser** inside Nextcloud: an *OPDS+* entry in the app menu shows the same library as
+  a page with covers, search and filters. See [Book browser](#book-browser).
+* **Calibre libraries** (beta, off by default): use and edit the metadata and covers of a Calibre
+  library. See [Calibre libraries](#calibre-libraries-beta).
 * The index lives in two database tables and is refreshed incrementally: on catalog requests
   (at most every *n* minutes, with a time budget so requests stay fast), by a background job
   every six hours, from the settings page, or with `occ opds:scan`.
@@ -39,7 +43,7 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
 4. Press *Scan for new and changed books* (or run `occ opds:scan <user>` for large libraries).
 5. Create an app password under **Settings → Security → Devices & sessions**.
 
-No build step is needed; the settings page uses plain JavaScript.
+No build step is needed; the settings page and the book browser use plain JavaScript.
 
 ## Connecting a reader
 
@@ -112,6 +116,43 @@ Downloaded images are kept for seven days so new editions only fetch new picture
 fetches images through Nextcloud's HTTP client, which refuses local network addresses unless
 the administrator allowed them.
 
+## Book browser
+
+Open *OPDS+* in the app menu of Nextcloud. It shows the library folder as covers, can be browsed
+by author (with their series), series, genre, publisher, language, year and format, searched and
+sorted, and works on phones. A book opens with its description, download buttons and a link to
+its file in Files. Files of the same name in one folder (`Emma.epub` and `Emma.pdf`) are shown as
+one book with several formats; in the OPDS catalog they remain separate entries.
+
+## Calibre libraries (beta)
+
+Turn on *Use and edit Calibre libraries* in Settings → Personal → OPDS+. The server needs PHP's
+`sqlite3` or `pdo_sqlite` extension. It applies to every folder with a `metadata.db` in or below
+the library folder:
+
+* **Reading:** the title, authors, series, tags, cover and so on that Calibre has stored replace
+  what is inside the book files, in the browser and in the OPDS catalog. Changes made in Calibre
+  are picked up by the next scan. Turning the option off goes back to the metadata in the files.
+* **Editing:** a book gets an *Edit* button for title, authors, series, tags, publisher, date,
+  languages, rating, description, identifiers, sort names and the cover (upload, take from the
+  book file, or remove). A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
+  the folder and files to `Author/Title (id)/Title - Author.ext` when the title or first author
+  changes. The contents of the book files are never changed.
+* **New library:** *Create and copy books* makes a Calibre library in a new or empty folder
+  and copies all books of the current library folder into it. The originals stay as they are.
+
+How your library is protected: a copy of the database is changed, checked and only then written
+back, and nothing is written if the original changed in the meantime, if Calibre has it open
+(`metadata.db-journal`), or if its version is unknown (Calibre 4 to 9 are supported). Moved
+files are moved back when anything fails. At most once an hour a backup of `metadata.db` is
+made before an edit; the last ones can be downloaded from the settings page. `metadata.opf` is kept up to date, so
+*Library maintenance → Restore database* in Calibre can rebuild everything.
+
+**Do not edit in Calibre and here at the same time.** If Calibre works on a synchronised copy of
+the folder, close it and let the files synchronise before editing here, and the other way round;
+otherwise the sync client will report a conflict on `metadata.db`. Adding and deleting books,
+custom columns and author notes remain tasks for Calibre. Custom columns are kept.
+
 ## Server-side tools
 
 ```bash
@@ -158,8 +199,10 @@ sorts people by last name.
   make sure Imagick with Ghostscript is installed.
 * **Wrong title/author for a file.** The app only reads what is embedded in the file; fix the
   metadata with Calibre (or rename the file for formats without metadata) and the next scan
-  picks it up because the file's ETag changes.
+  picks it up because the file's ETag changes. Books in a Calibre library can also be edited
+  in Nextcloud, see [Calibre libraries](#calibre-libraries-beta).
 
 ## License
 
-AGPL-3.0-or-later.
+AGPL-3.0-or-later. `resources/calibre-metadata.sql` is the database schema of
+[Calibre](https://calibre-ebook.com), © Kovid Goyal, GPL-3.0 (`resources/COPYING.GPL-3.0`).

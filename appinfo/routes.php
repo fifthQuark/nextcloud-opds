@@ -28,5 +28,26 @@ return [
         ['name' => 'settings#scan', 'url' => '/settings/scan', 'verb' => 'POST'],
         ['name' => 'settings#reset', 'url' => '/settings/reset', 'verb' => 'POST'],
         ['name' => 'settings#saveNews', 'url' => '/settings/news', 'verb' => 'POST'],
+        ['name' => 'calibre#enable', 'url' => '/settings/calibre', 'verb' => 'POST'],
+
+        // Book browser (session + CSRF protected)
+        ['name' => 'library#index', 'url' => '/library', 'verb' => 'GET'],
+        ['name' => 'library#books', 'url' => '/api/books', 'verb' => 'GET'],
+        ['name' => 'library#book', 'url' => '/api/books/{id}', 'verb' => 'GET', 'requirements' => ['id' => '\d+']],
+        ['name' => 'library#browse', 'url' => '/api/browse/{kind}', 'verb' => 'GET'],
+        ['name' => 'library#author', 'url' => '/api/author', 'verb' => 'GET'],
+        ['name' => 'library#refresh', 'url' => '/api/refresh', 'verb' => 'POST'],
+
+        // Calibre libraries (beta, has to be turned on by the user)
+        ['name' => 'calibre#update', 'url' => '/api/books/{id}', 'verb' => 'PUT', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#names', 'url' => '/api/books/{id}/names', 'verb' => 'GET', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#setCover', 'url' => '/api/books/{id}/cover', 'verb' => 'POST', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#coverFromFile', 'url' => '/api/books/{id}/cover/file', 'verb' => 'POST', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#removeCover', 'url' => '/api/books/{id}/cover', 'verb' => 'DELETE', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#libraries', 'url' => '/api/calibre', 'verb' => 'GET'],
+        ['name' => 'calibre#create', 'url' => '/api/calibre', 'verb' => 'POST'],
+        ['name' => 'calibre#import', 'url' => '/api/calibre/import', 'verb' => 'POST'],
+        ['name' => 'calibre#useLibrary', 'url' => '/api/calibre/use', 'verb' => 'POST'],
+        ['name' => 'calibre#backup', 'url' => '/api/calibre/backup', 'verb' => 'GET'],
     ],
 ];

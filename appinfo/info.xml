@@ -16,13 +16,16 @@ sort and download from.
   author, publication date, date added, date modified, publisher, series,
   language, format or file size.
 * Covers are extracted from the books and served as OPDS images/thumbnails.
+* Browse the same library inside Nextcloud: covers, search, authors, series,
+  genres and downloads.
+* Beta, off by default: edit the metadata and covers of Calibre libraries.
 * With the News app installed, a News entry offers the latest articles of all
   or selected feeds and folders as an EPUB: one part per feed, one chapter per
   article.
 * Log in from your reader with your Nextcloud user name and an app password
   (Settings > Security > Devices & sessions).
     ]]></description>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
     <licence>agpl</licence>
     <author homepage="https://github.com/fifthQuark">fifthQuark</author>
     <namespace>Opds</namespace>
@@ -51,4 +54,12 @@ sort and download from.
         <personal>OCA\Opds\Settings\Personal</personal>
         <personal-section>OCA\Opds\Settings\PersonalSection</personal-section>
     </settings>
+    <navigations>
+        <navigation>
+            <name>OPDS+</name>
+            <route>opds.library.index</route>
+            <icon>app.svg</icon>
+            <order>77</order>
+        </navigation>
+    </navigations>
 </info>
