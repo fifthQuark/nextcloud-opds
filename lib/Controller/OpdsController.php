@@ -120,7 +120,7 @@ class OpdsController extends Controller {
         string $sort = '', string $order = '', int $page = 1,
         string $author = '', string $subject = '', string $publisher = '', string $series = '',
         string $language = '', string $format = '', int $year = 0, string $letter = '',
-        string $folder = '', string $q = '',
+        string $folder = '', string $q = '', bool $standalone = false,
     ): Response {
         $uid = $this->authenticate();
         if ($uid instanceof Response) {
@@ -133,6 +133,7 @@ class OpdsController extends Controller {
         $filter->subject = $subject !== '' ? $subject : null;
         $filter->publisher = $publisher !== '' ? $publisher : null;
         $filter->series = $series !== '' ? $series : null;
+        $filter->standalone = $standalone ? true : null;
         $filter->language = $language !== '' ? $language : null;
         $filter->format = $format !== '' ? $format : null;
         $filter->year = $year > 0 ? $year : null;
@@ -147,7 +148,7 @@ class OpdsController extends Controller {
             $order = in_array($sort, ['added', 'modified', 'date'], true) ? 'desc' : $this->config->getDefaultOrder($uid);
         }
 
-        return $this->acquisitionFeed($uid, $filter, $sort, $order, max(1, $page), $this->titleFor($filter), $this->upFor($filter));
+        return $this->acquisitionFeed($uid, $filter, $sort, $order, max(1, $page), $this->titleFor($filter), $this->upFor($uid, $filter));
     }
 
     #[PublicPage]
@@ -243,11 +244,60 @@ class OpdsController extends Controller {
             ['group' => 'Sort by', 'title' => 'Number of books', 'active' => $sort === 'count', 'href' => $this->feeds->route('group', array_filter(['kind' => $kind, 'letter' => $letter, 'sort' => 'count']))],
         ];
         $bookSort = $kind === 'series' ? 'series' : ($kind === 'author' ? 'series' : 'title');
+        $seriesCounts = $kind === 'author' ? $this->repository->countSeriesByAuthor($uid) : [];
         foreach ($rows as $row) {
+            $seriesCount = $seriesCounts[$row['value']] ?? 0;
+            if ($seriesCount > 0) {
+                // The author's books are divided into series one level down
+                $feed['entries'][] = $this->nav('author:' . $row['value'], $row['value'], $this->feeds->route('author', ['name' => $row['value']]),
+                    $this->count($row['count'], 'book') . ', ' . $this->count($seriesCount, 'series', 'series'), FeedBuilder::NAVIGATION);
+                continue;
+            }
             $feed['entries'][] = $this->nav($kind . ':' . $row['value'], $row['value'],
                 $this->feeds->route('books', [$kind => $row['value'], 'sort' => $bookSort]), $this->count($row['count'], 'book'), FeedBuilder::ACQUISITION);
         }
         return $this->feedResponse($feed);
+    }
+
+    /** One author: all books, each of the author's series, and the books outside of any series. */
+    #[PublicPage]
+    #[NoCSRFRequired]
+    public function author(string $name = ''): Response {
+        $uid = $this->authenticate();
+        if ($uid instanceof Response) {
+            return $uid;
+        }
+        $this->refreshIndex($uid);
+        $books = $this->repository->listAuthorSeries($uid, $name);
+        if ($name === '' || $books['total'] === 0) {
+            return $this->notFound();
+        }
+        $entries = [
+            $this->nav('author-all:' . $name, 'All books', $this->feeds->route('books', ['author' => $name, 'sort' => 'series']),
+                $this->count($books['total'], 'book'), FeedBuilder::ACQUISITION),
+        ];
+        foreach ($books['series'] as $row) {
+            $entries[] = $this->nav('author-series:' . $name . ':' . $row['value'], $row['value'],
+                $this->feeds->route('books', ['author' => $name, 'series' => $row['value'], 'sort' => 'series']),
+                $this->count($row['count'], 'book') . ' in this series', FeedBuilder::ACQUISITION);
+        }
+        if ($books['standalone'] > 0 && $books['series'] !== []) {
+            $entries[] = $this->nav('author-standalone:' . $name, 'Not in a series',
+                $this->feeds->route('books', ['author' => $name, 'standalone' => '1', 'sort' => 'title']),
+                $this->count($books['standalone'], 'book'), FeedBuilder::ACQUISITION);
+        }
+        return $this->feedResponse([
+            'id' => 'urn:nextcloud-opds:author:' . sha1($name),
+            'title' => $name,
+            'subtitle' => $this->count($books['total'], 'book') . ', ' . $this->count(count($books['series']), 'series', 'series'),
+            'kind' => FeedBuilder::NAVIGATION,
+            'updated' => $this->config->getLastScan($uid) ?: $this->time->getTime(),
+            'self' => $this->feeds->route('author', ['name' => $name]),
+            'start' => $this->feeds->route('root'),
+            'up' => $this->feeds->route('group', ['kind' => 'author']),
+            'search' => $this->searchTemplate(),
+            'entries' => $entries,
+        ]);
     }
 
     #[PublicPage]
@@ -473,8 +523,8 @@ class OpdsController extends Controller {
         foreach (Config::SORTS as $key => $label) {
             $facets[] = ['group' => 'Sort by', 'title' => $label, 'active' => $key === $sort, 'href' => $link(['sort' => $key, 'order' => $order])];
         }
-        $facets[] = ['group' => 'Order', 'title' => 'Ascending', 'active' => $order === 'asc', 'href' => $link($base + ['order' => 'asc'])];
-        $facets[] = ['group' => 'Order', 'title' => 'Descending', 'active' => $order === 'desc', 'href' => $link($base + ['order' => 'desc'])];
+        $facets[] = ['group' => 'Order', 'title' => 'Ascending', 'active' => $order === 'asc', 'href' => $link(['sort' => $sort, 'order' => 'asc'])];
+        $facets[] = ['group' => 'Order', 'title' => 'Descending', 'active' => $order === 'desc', 'href' => $link(['sort' => $sort, 'order' => 'desc'])];
 
         $entries = $prependEntries;
         foreach ($result['books'] as $book) {
@@ -552,6 +602,9 @@ class OpdsController extends Controller {
         if ($f->series !== null) {
             $parts[] = 'in ' . $f->series;
         }
+        if ($f->standalone === true) {
+            $parts[] = 'not in a series';
+        }
         if ($f->subject !== null) {
             $parts[] = 'about ' . $f->subject;
         }
@@ -576,7 +629,10 @@ class OpdsController extends Controller {
         return $parts === [] ? 'All books' : 'Books ' . implode(', ', $parts);
     }
 
-    private function upFor(BookFilter $f): string {
+    private function upFor(string $uid, BookFilter $f): string {
+        if ($f->author !== null && $this->repository->listAuthorSeries($uid, $f->author)['series'] !== []) {
+            return $this->feeds->route('author', ['name' => $f->author]);
+        }
         foreach (['author', 'subject', 'publisher', 'series', 'language', 'format'] as $kind) {
             if ($f->{$kind} !== null) {
                 return $this->feeds->route('group', ['kind' => $kind]);

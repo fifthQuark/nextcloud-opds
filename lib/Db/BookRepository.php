@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\Opds\Db;
 
+use OCA\Opds\Metadata\Metadata;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 
@@ -114,6 +115,58 @@ class BookRepository {
     }
 
     /**
+     * Series of one author with the number of the author's books in each, and the
+     * number of the author's books that belong to no series.
+     *
+     * @return array{series: list<array{value: string, sort: string, count: int}>, standalone: int, total: int}
+     */
+    public function listAuthorSeries(string $uid, string $author): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('b.series')
+            ->selectAlias($qb->func()->count('b.id'), 'cnt')
+            ->from(self::TABLE, 'b');
+        $filter = new BookFilter();
+        $filter->author = $author;
+        $this->applyFilter($qb, $uid, $filter);
+        $qb->groupBy('b.series');
+
+        $out = ['series' => [], 'standalone' => 0, 'total' => 0];
+        $result = $qb->executeQuery();
+        while ($row = $result->fetch()) {
+            $name = (string)$row['series'];
+            $count = (int)$row['cnt'];
+            $out['total'] += $count;
+            if ($name === '') {
+                $out['standalone'] += $count;
+            } else {
+                $out['series'][] = ['value' => $name, 'sort' => Sorting::titleSortKey($name), 'count' => $count];
+            }
+        }
+        $result->closeCursor();
+        usort($out['series'], static fn (array $a, array $b): int => [$a['sort'], $a['value']] <=> [$b['sort'], $b['value']]);
+        return $out;
+    }
+
+    /** @return array<string,int> number of series per author; authors without a series are absent */
+    public function countSeriesByAuthor(string $uid): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectDistinct(['t.value', 'b.series'])
+            ->from(self::TERMS, 't')
+            ->innerJoin('t', self::TABLE, 'b', $qb->expr()->eq('b.id', 't.book_id'))
+            ->where($qb->expr()->eq('t.user_id', $qb->createNamedParameter($uid)))
+            ->andWhere($qb->expr()->eq('t.kind', $qb->createNamedParameter('author')))
+            ->andWhere($qb->expr()->nonEmptyString('b.series'));
+        $result = $qb->executeQuery();
+        $counts = [];
+        while ($row = $result->fetch()) {
+            $author = (string)$row['value'];
+            $counts[$author] = ($counts[$author] ?? 0) + 1;
+        }
+        $result->closeCursor();
+        return $counts;
+    }
+
+    /**
      * Distinct values of a single-valued column (publisher, series, language, format)
      * with book counts.
      *
@@ -216,6 +269,47 @@ class BookRepository {
         }
     }
 
+    /**
+     * Separates combined author fields ("A & B", "A; B") of books indexed by versions
+     * that stored them as one person. Returns the number of changed books.
+     */
+    public function splitStoredAuthors(): int {
+        $changed = 0;
+        $lastId = 0;
+        do {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('*')->from(self::TABLE)
+                ->where($qb->expr()->gt('id', $qb->createNamedParameter($lastId, IQueryBuilder::PARAM_INT)))
+                ->andWhere($qb->expr()->nonEmptyString('author'))
+                ->orderBy('id', 'ASC')
+                ->setMaxResults(500);
+            $result = $qb->executeQuery();
+            $rows = $result->fetchAll();
+            $result->closeCursor();
+            foreach ($rows as $row) {
+                $lastId = (int)$row['id'];
+                $book = $this->hydrate($row);
+                $meta = new Metadata();
+                $sorts = explode(self::AUTHOR_SEPARATOR, $book->authorSort);
+                foreach ($book->authors as $i => $author) {
+                    // A sort name made from a combined field ("gaiman, terry pratchett & neil")
+                    // does not consist of the same words as the author it would belong to
+                    $sort = $sorts[$i] ?? '';
+                    $meta->addAuthor($author, Sorting::sameWords($author, $sort) ? $sort : '');
+                }
+                // A joined field reads back as a list here, but is still a single term
+                if (count($meta->authors) < 2 && count($book->authors) < 2) {
+                    continue;
+                }
+                $book->authors = $meta->authors;
+                $book->authorSort = Sorting::authorSortKey($meta->authors, $meta->authorsSort);
+                $this->save($book);
+                $changed++;
+            }
+        } while (count($rows) === 500);
+        return $changed;
+    }
+
     /** @param int[] $fileIds */
     public function deleteByFileIds(string $uid, array $fileIds): void {
         foreach (array_chunk($fileIds, 200) as $chunk) {
@@ -309,6 +403,9 @@ class BookRepository {
             if ($value !== null && $value !== '') {
                 $qb->andWhere($qb->expr()->eq('b.' . $column, $qb->createNamedParameter($value)));
             }
+        }
+        if ($f->standalone === true) {
+            $qb->andWhere($qb->expr()->emptyString('b.series'));
         }
         if ($f->year !== null) {
             $qb->andWhere($qb->expr()->eq('b.pubyear', $qb->createNamedParameter($f->year, IQueryBuilder::PARAM_INT)));

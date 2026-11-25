@@ -232,6 +232,10 @@ class FeedBuilder {
         }
 
         $summaryParts = [];
+        if (count($book->authors) > 1) {
+            // Some readers only show one <author> element
+            $summaryParts[] = 'Authors: ' . $book->authorString();
+        }
         if ($book->series !== '') {
             $summaryParts[] = 'Series: ' . $book->series . ($book->seriesIndex > 0 ? ' #' . $this->number($book->seriesIndex) : '');
         }

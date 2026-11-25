@@ -66,12 +66,7 @@ class MetadataExtractor {
         $book->titleSort = Sorting::titleSortKey($book->title);
         $book->titleLetter = Sorting::letterOf($book->titleSort);
         $book->authors = $meta->authors;
-        $sortNames = [];
-        foreach ($meta->authors as $i => $author) {
-            $explicit = $meta->authorsSort[$i] ?? '';
-            $sortNames[] = $explicit !== '' ? Sorting::fold($explicit) : Sorting::personSortKey($author);
-        }
-        $book->authorSort = implode(' & ', $sortNames);
+        $book->authorSort = Sorting::authorSortKey($meta->authors, $meta->authorsSort);
         $book->publisher = $meta->publisher;
         $book->series = $meta->series;
         $book->seriesIndex = $meta->seriesIndex;

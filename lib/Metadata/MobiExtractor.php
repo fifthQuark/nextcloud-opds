@@ -123,9 +123,11 @@ class MobiExtractor {
         if ($updatedTitle !== '') {
             $meta->title = $updatedTitle;
         }
-        foreach ($authors as $author) {
-            // Kindle files often store "Last, First"
-            $meta->addAuthor(str_contains($author, ',') ? \OCA\Opds\Db\Sorting::displayName($author) : $author, str_contains($author, ',') ? $author : '');
+        foreach ($authors as $field) {
+            foreach (Authors::split($field) as $author) {
+                // Kindle files often store "Last, First"
+                $meta->addAuthor(str_contains($author, ',') ? \OCA\Opds\Db\Sorting::displayName($author) : $author, str_contains($author, ',') ? $author : '');
+            }
         }
         foreach ($subjects as $subject) {
             $meta->addSubject($subject);

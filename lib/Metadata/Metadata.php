@@ -26,18 +26,17 @@ class Metadata {
     public ?string $coverData = null;
     public string $coverMime = '';
 
+    /** Adds one author, or several when the field names more than one person. */
     public function addAuthor(string $name, string $sortName = ''): void {
-        $name = Text::clean($name);
-        if ($name === '') {
-            return;
-        }
-        foreach ($this->authors as $existing) {
-            if (mb_strtolower($existing) === mb_strtolower($name)) {
-                return;
+        foreach (Authors::expand(Text::clean($name), Text::clean($sortName)) as [$author, $sort]) {
+            foreach ($this->authors as $existing) {
+                if (mb_strtolower($existing) === mb_strtolower($author)) {
+                    continue 2;
+                }
             }
+            $this->authors[] = $author;
+            $this->authorsSort[] = $sort;
         }
-        $this->authors[] = $name;
-        $this->authorsSort[] = Text::clean($sortName);
     }
 
     public function addSubject(string $subject): void {

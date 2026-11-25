@@ -63,6 +63,31 @@ final class Sorting {
         return self::fold($last . ', ' . implode(' ', $parts));
     }
 
+    /** Whether two spellings of a name differ only in word order, case, accents and punctuation. */
+    public static function sameWords(string $a, string $b): bool {
+        $words = static function (string $value): array {
+            $list = preg_split('/[^\p{L}\p{N}]+/u', self::fold($value), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            sort($list);
+            return $list;
+        };
+        return $words($a) === $words($b);
+    }
+
+    /**
+     * Combined sort key of all authors of a book.
+     *
+     * @param string[] $names
+     * @param string[] $sortNames explicit sort names parallel to $names, '' when unknown
+     */
+    public static function authorSortKey(array $names, array $sortNames): string {
+        $keys = [];
+        foreach ($names as $i => $name) {
+            $explicit = $sortNames[$i] ?? '';
+            $keys[] = $explicit !== '' ? self::fold($explicit) : self::personSortKey($name);
+        }
+        return implode(BookRepository::AUTHOR_SEPARATOR, $keys);
+    }
+
     /** "Austen, Jane" -> "Jane Austen" (display form from a file-as value). */
     public static function displayName(string $fileAs): string {
         if (preg_match('/^\s*([^,]+),\s*(.+?)\s*$/', $fileAs, $m)) {

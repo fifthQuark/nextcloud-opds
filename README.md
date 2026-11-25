@@ -8,7 +8,7 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
   PDF (Info dictionary and XMP), CBZ/CBR (`ComicInfo.xml`), MOBI/AZW/AZW3 (EXTH headers),
   FB2 and DOCX/ODT. Files without metadata fall back to the file name (`Author - Title.ext`).
 * **Browse** by author, title (A–Z), series, genre/subject, publisher, language, publication
-  year, format or folder; full-text search over title, author, subjects, series and publisher.
+  year, format or folder; authors open to their series; full-text search over title, author, subjects, series and publisher.
 * **Sort** every book list by title, author, publication date, date added, date modified,
   publisher, series, language, format or file size, ascending or descending. Sort options are
   exposed as OPDS facets, so readers that support facets show them as a menu; every option is
@@ -61,6 +61,7 @@ Aldiko, PocketBook, Foliate, Cantook and Calibre's "Get books" (via an OPDS plug
 | All books / filtered lists | `/apps/opds/books` | Acquisition feed, paginated |
 | Search | `/apps/opds/search?q=term` | Also advertised through OpenSearch |
 | Group lists | `/apps/opds/group/{author,title,series,subject,publisher,language,year,format}` | Lists with counts; long lists are split into A–Z groups (`?letter=A`) |
+| Author | `/apps/opds/author?name=…` | All books, each series and the books outside of any series |
 | Folders | `/apps/opds/folders?path=/Books/SF` | Sub folders plus the books in that folder |
 | Download | `/apps/opds/download/{fileId}/{filename}` | Streams the file with the right MIME type |
 | Cover / thumbnail | `/apps/opds/cover/{fileId}`, `/apps/opds/thumb/{fileId}` | |
@@ -74,6 +75,7 @@ Parameters accepted by `/books` (and `/search`, `/folders` where they make sense
 | `sort` | `title`, `author`, `date` (publication date), `added`, `modified`, `publisher`, `series`, `language`, `format`, `size` |
 | `order` | `asc`, `desc` (defaults to `desc` for `added`, `modified` and `date`) |
 | `page` | 1-based page number; page size is a per-user setting |
+| `standalone` | `1` lists only books that belong to no series |
 | `author`, `subject`, `publisher`, `series`, `language`, `format`, `year`, `letter`, `folder`, `q` | Filters; several can be combined |
 
 Example: `/apps/opds/books?subject=Fantasy&sort=date&order=desc` lists fantasy books, newest
@@ -135,6 +137,9 @@ Settings keys (per user, app id `opds`): `root`, `extensions`, `filename_pattern
 | FB2 | `book-title` | `author` elements | `sequence` | `genre` (codes translated) | `publisher`, `date`/`year`, `lang` | `coverpage` binary |
 | DOCX / ODT | `dc:title` | `dc:creator` | – | keywords | created date, language | embedded thumbnail |
 | Anything else | file name | file name (`Author - Title`) | – | – | `(Year)` suffix | – |
+
+Several people in one author field are separated at `&`, `;` and ` / `, and at commas and *and*,
+*with*, *und*, *et* when every part is a full name ("Le Guin, Ursula K." stays one person).
 
 Sorting ignores case, accents and leading articles (*The*, *A*, *Der*, *Le*, *El*, …) and
 sorts people by last name.

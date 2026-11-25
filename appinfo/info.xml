@@ -22,7 +22,7 @@ sort and download from.
 * Log in from your reader with your Nextcloud user name and an app password
   (Settings > Security > Devices & sessions).
     ]]></description>
-    <version>1.1.1</version>
+    <version>1.2.0</version>
     <licence>agpl</licence>
     <author homepage="https://github.com/fifthQuark">fifthQuark</author>
     <namespace>Opds</namespace>

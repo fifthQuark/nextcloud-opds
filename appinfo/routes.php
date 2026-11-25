@@ -14,6 +14,7 @@ return [
         ['name' => 'opds#books', 'url' => '/books', 'verb' => 'GET'],
         ['name' => 'opds#search', 'url' => '/search', 'verb' => 'GET'],
         ['name' => 'opds#group', 'url' => '/group/{kind}', 'verb' => 'GET'],
+        ['name' => 'opds#author', 'url' => '/author', 'verb' => 'GET'],
         ['name' => 'opds#folders', 'url' => '/folders', 'verb' => 'GET'],
         ['name' => 'opds#opensearch', 'url' => '/opensearch.xml', 'verb' => 'GET'],
         ['name' => 'opds#download', 'url' => '/download/{id}/{name}', 'verb' => 'GET', 'requirements' => ['name' => '.+']],

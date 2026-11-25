@@ -12,6 +12,8 @@ class BookFilter {
     public ?string $subject = null;
     public ?string $publisher = null;
     public ?string $series = null;
+    /** Only books that belong to no series */
+    public ?bool $standalone = null;
     public ?string $language = null;
     public ?string $format = null;
     public ?int $year = null;

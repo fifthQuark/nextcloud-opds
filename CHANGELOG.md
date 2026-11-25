@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 – 2026-11-25
+
+* Books with several authors are listed under each of them, also when the file names them in a
+  single field ("A & B", "A; B", "A, B and C"). Books already indexed are separated when the app
+  is updated; *Re-read all metadata* also catches ambiguous fields such as "First Last, First Last".
+* Authors who have written series open to a list of their series, next to *All books* and
+  *Not in a series*.
+* Fixed the *Ascending* / *Descending* options of book lists, which kept the current order.
+
 ## 1.1.1 – 2026-11-20
 
 * Fixed the screen going blank in Firefox when ticking a checkbox in the lower part of the
