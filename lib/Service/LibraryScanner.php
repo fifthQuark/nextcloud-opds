@@ -35,6 +35,7 @@ class LibraryScanner {
         private MetadataExtractor $extractor,
         private CoverService $covers,
         private CalibreLibrary $calibre,
+        private Columns $columns,
         private IPreview $preview,
         private ITimeFactory $time,
         private LoggerInterface $logger,
@@ -73,16 +74,21 @@ class LibraryScanner {
             $failed = [];
             if ($this->config->isCalibreEnabled($uid) && Sqlite::available()) {
                 $readers = $this->calibre->openAll($uid, $failed);
+                $this->columns->update($uid, $readers, $failed !== []);
             }
             $pattern = $this->config->getFilenamePattern($uid);
 
             $seen = [];
             foreach ($files as $file) {
                 $fileId = $file->getId();
+                [$reader, $calibreId] = $this->calibreBook($readers, $file);
+                if ($reader === null && $this->isExtra($readers, $file)) {
+                    $result->total--;
+                    continue;
+                }
                 $seen[$fileId] = true;
                 $isNew = !isset($existing[$fileId]);
                 $path = $userFolder->getRelativePath($file->getPath()) ?? $file->getPath();
-                [$reader, $calibreId] = $this->calibreBook($readers, $file);
                 $rev = $reader !== null ? $reader->revision($calibreId) : '';
                 if (!$isNew && $reader === null && $existing[$fileId]['rev'] !== '' && $this->isBelow($file, $failed)) {
                     // Keep what is known until the library can be read again
@@ -211,6 +217,13 @@ class LibraryScanner {
         $book->size = $file->getSize();
         $book->mimetype = $file->getMimeType();
         $book->format = FilenameExtractor::format($file->getName());
+        $book->workKey = '';
+        $book->rating = 0;
+        $book->languages = [];
+        $book->identifiers = [];
+        $book->authorSorts = [];
+        $book->subjectsNested = false;
+        $book->custom = [];
         if ($book->indexedAt === 0) {
             $book->indexedAt = $now;
         }
@@ -259,6 +272,16 @@ class LibraryScanner {
         return [null, 0];
     }
 
+    /** @param list<CalibreReader> $readers */
+    private function isExtra(array $readers, File $file): bool {
+        foreach ($readers as $reader) {
+            if ($reader->isExtra($file)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * What Calibre knows about a book replaces the metadata inside the file.
      *
@@ -274,7 +297,28 @@ class LibraryScanner {
         $book->series = $record['series'];
         $book->seriesIndex = $record['series_index'];
         $book->subjects = $record['tags'];
-        $book->language = Languages::fromCalibre($record['languages'][0] ?? '');
+        $book->workKey = CalibreReader::workOf($library, $record['id']);
+        $languages = array_map(static fn (string $code): string => Languages::fromCalibre($code), $record['languages']);
+        $book->language = $languages[0] ?? '';
+        $book->languages = count($languages) > 1 ? $languages : [];
+        $book->rating = $record['rating'];
+        $book->identifiers = $record['identifiers'];
+        $book->authorSorts = $record['author_sorts'];
+        $book->subjectsNested = $record['tags_hierarchy'];
+        $book->custom = array_map(static fn (array $c): array => [
+            'key' => Book::columnKey($c['label']),
+            'name' => $c['name'],
+            'type' => $c['type'],
+            'values' => $c['type'] === 'comments' ? [] : $c['values'],
+            'text' => $c['type'] === 'comments' ? Text::plain($c['text'], 20000) : $c['text'],
+            'sorts' => array_map(static fn (string $v): string => match ($c['type']) {
+                'rating' => sprintf('%02d', 10 - (int)$v),
+                'bool' => $v === 'Yes' ? '0' : '1',
+                'enumeration' => isset($c['order'][$v]) ? sprintf('%04d', $c['order'][$v]) : '',
+                default => '',
+            }, $c['values']),
+            'nested' => $c['hierarchy'],
+        ], $record['custom']);
         $book->pubdate = $record['pubdate'];
         $book->pubyear = $book->pubdate !== '' ? (int)substr($book->pubdate, 0, 4) : 0;
         $book->description = Text::plain($record['comments']);

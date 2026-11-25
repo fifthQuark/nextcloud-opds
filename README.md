@@ -66,7 +66,7 @@ Aldiko, PocketBook, Foliate, Cantook and Calibre's "Get books" (via an OPDS plug
 | Root navigation | `/apps/opds/` | Entry points for everything below |
 | All books / filtered lists | `/apps/opds/books` | Acquisition feed, paginated |
 | Search | `/apps/opds/search?q=term` | Also advertised through OpenSearch |
-| Group lists | `/apps/opds/group/{author,title,series,subject,publisher,language,year,format}` | Lists with counts; long lists are split into A–Z groups (`?letter=A`) |
+| Group lists | `/apps/opds/group/{author,title,series,subject,publisher,language,year,format,rating}`, `/apps/opds/group/column-{label}` for a custom column of Calibre | Lists with counts; long lists are split into A–Z groups (`?letter=A`), nested lists open with `?parent=Fiction` |
 | Author | `/apps/opds/author?name=…` | All books, each series and the books outside of any series |
 | Folders | `/apps/opds/folders?path=/Books/SF` | Sub folders plus the books in that folder |
 | Download | `/apps/opds/download/{fileId}/{filename}` | Streams the file with the right MIME type |
@@ -78,11 +78,13 @@ Parameters accepted by `/books` (and `/search`, `/folders` where they make sense
 
 | Parameter | Values |
 | --- | --- |
-| `sort` | `title`, `author`, `date` (publication date), `added`, `modified`, `publisher`, `series`, `language`, `format`, `size` |
-| `order` | `asc`, `desc` (defaults to `desc` for `added`, `modified` and `date`) |
+| `sort` | `title`, `author`, `date` (publication date), `added`, `modified`, `publisher`, `series`, `language`, `format`, `size`, `rating` |
+| `order` | `asc`, `desc` (defaults to `desc` for `added`, `modified`, `date` and `rating`) |
 | `page` | 1-based page number; page size is a per-user setting |
 | `standalone` | `1` lists only books that belong to no series |
 | `author`, `subject`, `publisher`, `series`, `language`, `format`, `year`, `letter`, `folder`, `q` | Filters; several can be combined |
+| `rating` | 1 to 10, which is twice the number of stars |
+| `column`, `value` | Books with this value in a custom column of Calibre |
 
 Example: `/apps/opds/books?subject=Fantasy&sort=date&order=desc` lists fantasy books, newest
 publication first.
@@ -124,7 +126,7 @@ Open *OPDS+* in the app menu of Nextcloud. It shows the library folder as covers
 by author (with their series), series, genre, publisher, language, year and format, searched and
 sorted, and works on phones. A book opens with its description, download buttons and a link to
 its file in Files. Files of the same name in one folder (`Emma.epub` and `Emma.pdf`) are shown as
-one book with several formats; in the OPDS catalog they remain separate entries.
+one book with several formats, here and in the OPDS catalog.
 
 ## Calibre libraries (beta)
 
@@ -135,6 +137,13 @@ the library folder:
 * **Reading:** the title, authors, series, tags, cover and so on that Calibre has stored replace
   what is inside the book files, in the browser and in the OPDS catalog. Changes made in Calibre
   are picked up by the next scan. Turning the option off goes back to the metadata in the files.
+* **More from Calibre:** ratings, all languages, identifiers, the sort names of authors and custom
+  columns are shown. Ratings and columns of the types text, fixed values, series, yes/no and rating
+  get a list of their own in the browser and the OPDS catalog; columns built from a template are not
+  available. Tags and text columns that Calibre shows as a hierarchy (`Fiction.Fantasy`, see
+  *Preferences → Look & feel → Tag browser*) are nested here as well.
+* **Files:** the formats of a book are those listed in Calibre. Other files in its folder, such as
+  those in `data`, are not books of their own and left out.
 * **Editing:** a book gets an *Edit* button for title, authors, series, tags, publisher, date,
   languages, rating, description, identifiers, sort names and the cover (upload, take from the
   book file, or remove). A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
@@ -160,7 +169,7 @@ made before an edit; the last ones can be downloaded from the settings page. `me
 **Do not edit in Calibre and here at the same time.** If Calibre works on a synchronised copy of
 the folder, close it and let the files synchronise before editing here, and the other way round;
 otherwise the sync client will report a conflict on `metadata.db`. Deleting books,
-custom columns and author notes remain tasks for Calibre. Custom columns are kept.
+editing custom columns and author notes remain tasks for Calibre. Custom columns are kept.
 
 ## Server-side tools
 

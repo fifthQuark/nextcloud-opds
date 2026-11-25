@@ -14,12 +14,15 @@
         author: 'Authors', series: 'Series', subject: 'Genres', publisher: 'Publishers',
         language: 'Languages', year: 'Years', format: 'Formats',
     };
-    const FILTERS = ['author', 'series', 'subject', 'publisher', 'language', 'year', 'format', 'standalone', 'q'];
+    const FILTERS = ['author', 'series', 'subject', 'publisher', 'language', 'year', 'format', 'rating', 'column', 'value', 'standalone', 'q'];
+    const COLUMN = 'column-';
+    const extraKinds = new Set();
 
     let requestId = 0; // newest view; answers for older ones are dropped
     let list = null; // { params, page, pages, grid }
     let shownList = null; // hash of the list behind the dialog
     let languageNames = {};
+    const valueLabels = {};
 
     // -------------------------------------------------------------- helpers
 
@@ -182,7 +185,7 @@
         const isList = !(view in KINDS);
         $('ol-sort').hidden = !isList;
         if (!isList) {
-            return showKind(view, mine);
+            return showKind(view, mine, params.parent || '');
         }
         if (view === 'home') {
             return showBooks({ ...params }, params.q ? 'Search results' : 'All books', mine);
@@ -196,7 +199,19 @@
         go('home');
     }
 
+    /** Parameters of the list of books with this value */
+    function filterFor(kind, value) {
+        return kind.startsWith(COLUMN) ? { column: kind.slice(COLUMN.length), value } : { [kind]: value };
+    }
+
+    function stars(n) {
+        return '★'.repeat(Math.floor(n / 2)) + (n % 2 ? '½' : '');
+    }
+
     function activeView(params) {
+        if (params.column) {
+            return COLUMN + params.column;
+        }
         return Object.keys(KINDS).find((k) => params[k]) || 'home';
     }
 
@@ -209,6 +224,12 @@
         }
         if (params.format) {
             return params.format.toUpperCase();
+        }
+        if (params.rating) {
+            return stars(Number(params.rating));
+        }
+        if (params.column && params.value) {
+            return (KINDS[COLUMN + params.column] || params.column) + ': ' + (valueLabels[params.column + ' ' + params.value] || params.value);
         }
         for (const key of ['author', 'series', 'subject', 'publisher', 'year']) {
             if (params[key]) {
@@ -227,8 +248,8 @@
 
     // ---------------------------------------------------------------- lists
 
-    async function showKind(kind, mine) {
-        $('ol-title').textContent = KINDS[kind];
+    async function showKind(kind, mine, parent) {
+        $('ol-title').textContent = parent || KINDS[kind];
         content.setAttribute('aria-busy', 'true');
         let data;
         try {
@@ -249,7 +270,13 @@
                 languageNames[entry.value] = entry.label;
             }
         }
-        $('ol-count').textContent = data.entries.length ? String(data.entries.length) : '';
+        for (const entry of data.entries) {
+            if (entry.label !== entry.value) {
+                valueLabels[kind.slice(COLUMN.length) + ' ' + entry.value] = entry.label;
+            }
+        }
+        const level = data.nested ? nest(data.entries, parent) : data.entries;
+        $('ol-count').textContent = level.length ? String(level.length) : '';
         if (data.entries.length === 0) {
             message('Nothing here yet.');
             return;
@@ -258,12 +285,14 @@
         const filter = el('input', { type: 'search', class: 'ol-filter', placeholder: 'Filter ' + KINDS[kind].toLowerCase(), 'aria-label': 'Filter ' + KINDS[kind].toLowerCase() });
         const draw = () => {
             const word = filter.value.trim().toLocaleLowerCase();
-            const found = data.entries.filter((e) => !word || e.label.toLocaleLowerCase().includes(word));
+            // Searching looks through all levels
+            const found = word ? data.entries.filter((e) => e.label.toLocaleLowerCase().includes(word)) : level;
             let shown = 0;
             const more = () => {
                 const next = found.slice(shown, shown + 200);
                 shown += next.length;
-                tiles.append(...next.map((entry) => tile(entry, '#/books' + query({ [kind]: entry.value }))));
+                tiles.append(...next.map((entry) => tile(entry, entry.children
+                    ? '#/' + kind + query({ parent: entry.value }) : '#/books' + query(filterFor(kind, entry.value)))));
                 $('ol-more').hidden = shown >= found.length;
             };
             tiles.replaceChildren();
@@ -272,8 +301,28 @@
             $('ol-count').textContent = String(found.length);
         };
         filter.addEventListener('input', draw);
+        if (data.nested && parent) {
+            const up = parent.includes('.') ? parent.slice(0, parent.lastIndexOf('.')) : '';
+            content.append(el('p', { class: 'ol-crumb' }, 'in ', el('a', { href: '#/' + kind + query({ parent: up }) }, up || KINDS[kind])),
+                el('nav', { class: 'ol-chips' }, el('a', { class: 'ol-chip', href: '#/books' + query(filterFor(kind, parent)) }, 'All books in ' + parent)));
+        }
         content.append(...(data.entries.length > 20 ? [filter] : []), tiles);
         draw();
+    }
+
+    /** One level of a list in which "A.B" is below "A" */
+    function nest(entries, parent) {
+        const known = new Set(entries.map((e) => e.value));
+        const upOf = (value) => {
+            const up = value.slice(0, Math.max(0, value.lastIndexOf('.')));
+            return known.has(up) ? up : '';
+        };
+        const children = {};
+        for (const e of entries) {
+            children[upOf(e.value)] = (children[upOf(e.value)] || 0) + 1;
+        }
+        return entries.filter((e) => upOf(e.value) === parent)
+            .map((e) => ({ ...e, label: parent ? e.value.slice(parent.length + 1) : e.label, children: children[e.value] || 0 }));
     }
 
     function tile(entry, href) {
@@ -448,7 +497,9 @@
 
     function drawBook(book) {
         stopEditing();
-        languageNames[book.language] = book.languageName;
+        for (const l of book.languages) {
+            languageNames[l.code] = l.name;
+        }
         const facts = el('dl', { class: 'ol-facts' });
         const fact = (name, value) => {
             if (value && (!Array.isArray(value) || value.length)) {
@@ -459,12 +510,23 @@
         fact('Genres', joined(book.subjects.map((s) => link({ subject: s }, s))));
         fact('Publisher', book.publisher ? link({ publisher: book.publisher }, book.publisher) : null);
         fact('Published', book.pubdate);
-        fact('Language', book.language ? link({ language: book.language }, book.languageName) : null);
-        if (book.calibre && book.calibre.rating) {
-            const stars = book.calibre.rating / 2;
-            fact('Rating', el('span', { title: stars + ' of 5' }, '★'.repeat(Math.floor(stars)) + (stars % 1 ? '½' : '') + ' (' + stars + ' of 5)'));
+        fact(book.languages.length > 1 ? 'Languages' : 'Language', joined(book.languages.map((l) => link({ language: l.code }, l.name))));
+        if (book.rating) {
+            fact('Rating', link({ rating: book.rating }, stars(book.rating) + ' (' + book.rating / 2 + ' of 5)'));
+        }
+        for (const c of book.columns) {
+            for (const v of c.values) {
+                if (v.label !== v.value) {
+                    valueLabels[c.key + ' ' + v.value] = v.label;
+                }
+            }
+            fact(c.name, c.type === 'comments' ? c.text.split('\n').map((t) => el('p', null, t))
+                : c.values.length === 0 ? c.text
+                    : c.type === 'series' ? link({ column: c.key, value: c.values[0].value }, c.text)
+                        : joined(c.values.map((v) => link({ column: c.key, value: v.value }, v.label))));
         }
         fact('ISBN', book.isbn);
+        fact('Identifiers', book.identifiers.join(', '));
         fact('Folder', book.folder);
 
         const files = el('ul', { class: 'ol-files' }, book.formats.map((f) => el('li', null,
@@ -729,13 +791,38 @@
 
     // --------------------------------------------------------------- events
 
-    for (const [key, label] of Object.entries(state.sorts)) {
-        $('ol-sort-by').append(el('option', { value: key }, label));
+    /** Lists and sort orders that depend on the books that are there */
+    function drawLists(lists) {
+        if (!lists.sorts) {
+            return;
+        }
+        const sortBy = $('ol-sort-by').value;
+        $('ol-sort-by').replaceChildren(...Object.entries(lists.sorts).map(([key, label]) => el('option', { value: key }, label)));
+        if (sortBy in lists.sorts) {
+            $('ol-sort-by').value = sortBy;
+        }
+        for (const kind of extraKinds) {
+            delete KINDS[kind];
+        }
+        extraKinds.clear();
+        for (const item of root.querySelectorAll('.ol-nav li.ol-extra')) {
+            item.remove();
+        }
+        const extra = [...(lists.rated ? [{ kind: 'rating', name: 'Ratings' }] : []), ...lists.columns];
+        const current = parse();
+        for (const { kind, name } of extra) {
+            KINDS[kind] = name;
+            extraKinds.add(kind);
+            const active = kind === (current.view === 'books' ? activeView(current.params) : current.view);
+            root.querySelector('.ol-nav ul').append(el('li', { class: 'ol-extra' },
+                el('a', { href: '#/' + kind, 'data-view': kind, 'aria-current': active ? 'page' : null }, name)));
+        }
     }
+    drawLists(state);
     $('ol-settings').href = state.settingsUrl;
     $('ol-sort-by').addEventListener('change', (e) => {
         const sort = e.target.value;
-        changeSort(sort, ['added', 'modified', 'date'].includes(sort) ? 'desc' : 'asc');
+        changeSort(sort, state.newestFirst.includes(sort) ? 'desc' : 'asc');
     });
     $('ol-order').addEventListener('click', () => changeSort($('ol-sort-by').value, $('ol-order').dataset.order === 'desc' ? 'asc' : 'desc'));
 
@@ -782,6 +869,7 @@
             let changed = false;
             do {
                 result = await api('POST', '/api/refresh', { force });
+                drawLists(result);
                 changed = changed || result.changed;
                 force = true;
             } while (!result.complete && !result.error);

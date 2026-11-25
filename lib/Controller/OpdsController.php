@@ -10,6 +10,7 @@ use OCA\Opds\Db\BookFilter;
 use OCA\Opds\Db\BookRepository;
 use OCA\Opds\Db\Sorting;
 use OCA\Opds\News\NewsService;
+use OCA\Opds\Service\Columns;
 use OCA\Opds\Service\Config;
 use OCA\Opds\Service\CoverService;
 use OCA\Opds\Service\FeedBuilder;
@@ -46,7 +47,10 @@ class OpdsController extends Controller {
         'language' => ['title' => 'Languages', 'one' => 'language', 'many' => 'languages'],
         'year' => ['title' => 'Publication years', 'one' => 'year', 'many' => 'years'],
         'format' => ['title' => 'Formats', 'one' => 'format', 'many' => 'formats'],
+        'rating' => ['title' => 'Ratings', 'one' => 'rating', 'many' => 'ratings'],
     ];
+    /** Kinds of groups for custom columns start with this */
+    private const COLUMN = 'column-';
 
     public function __construct(
         IRequest $request,
@@ -56,6 +60,7 @@ class OpdsController extends Controller {
         private ITimeFactory $time,
         private Config $config,
         private BookRepository $repository,
+        private Columns $columns,
         private LibraryScanner $scanner,
         private CoverService $covers,
         private FeedBuilder $feeds,
@@ -75,7 +80,7 @@ class OpdsController extends Controller {
             return $uid;
         }
         $this->refreshIndex($uid);
-        $total = $this->repository->count($uid);
+        $total = $this->repository->countWorks($uid);
         $defaultSort = $this->config->getDefaultSort($uid);
         $defaultOrder = $this->config->getDefaultOrder($uid);
 
@@ -90,8 +95,15 @@ class OpdsController extends Controller {
                 'Sorted by publication date, newest first', FeedBuilder::ACQUISITION),
         ];
         foreach (self::GROUP_KINDS as $kind => $labels) {
+            if ($kind === 'rating' && !$this->repository->hasRatings($uid)) {
+                continue;
+            }
             $entries[] = $this->nav($kind, $labels['title'], $this->feeds->route('group', ['kind' => $kind]),
                 'Browse by ' . $labels['one'], FeedBuilder::NAVIGATION);
+        }
+        foreach ($this->columns->browsable($uid) as $column) {
+            $entries[] = $this->nav(self::COLUMN . $column['key'], $column['name'], $this->feeds->route('group', ['kind' => self::COLUMN . $column['key']]),
+                'Browse by this column of your Calibre library', FeedBuilder::NAVIGATION);
         }
         $entries[] = $this->nav('folders', 'Folders', $this->feeds->route('folders'),
             'Browse the library folder structure', FeedBuilder::ACQUISITION);
@@ -121,6 +133,7 @@ class OpdsController extends Controller {
         string $author = '', string $subject = '', string $publisher = '', string $series = '',
         string $language = '', string $format = '', int $year = 0, string $letter = '',
         string $folder = '', string $q = '', bool $standalone = false,
+        int $rating = 0, string $column = '', string $value = '',
     ): Response {
         $uid = $this->authenticate();
         if ($uid instanceof Response) {
@@ -140,15 +153,20 @@ class OpdsController extends Controller {
         $filter->letter = $letter !== '' ? $letter : null;
         $filter->folder = $folder !== '' ? $folder : null;
         $filter->query = trim($q) !== '' ? trim($q) : null;
+        $filter->rating = $rating > 0 ? $rating : null;
+        if ($column !== '' && $value !== '') {
+            $filter->column = $column;
+            $filter->value = $value;
+        }
 
         if (!array_key_exists($sort, Config::SORTS)) {
             $sort = ($filter->series !== null || $filter->author !== null) ? 'series' : $this->config->getDefaultSort($uid);
         }
         if ($order !== 'asc' && $order !== 'desc') {
-            $order = in_array($sort, ['added', 'modified', 'date'], true) ? 'desc' : $this->config->getDefaultOrder($uid);
+            $order = in_array($sort, Config::NEWEST_FIRST, true) ? 'desc' : $this->config->getDefaultOrder($uid);
         }
 
-        return $this->acquisitionFeed($uid, $filter, $sort, $order, max(1, $page), $this->titleFor($filter), $this->upFor($uid, $filter));
+        return $this->acquisitionFeed($uid, $filter, $sort, $order, max(1, $page), $this->titleFor($uid, $filter), $this->upFor($uid, $filter));
     }
 
     #[PublicPage]
@@ -159,25 +177,30 @@ class OpdsController extends Controller {
 
     #[PublicPage]
     #[NoCSRFRequired]
-    public function group(string $kind, string $letter = '', string $sort = 'name'): Response {
+    public function group(string $kind, string $letter = '', string $sort = 'name', string $parent = ''): Response {
         $uid = $this->authenticate();
         if ($uid instanceof Response) {
             return $uid;
         }
-        if (!isset(self::GROUP_KINDS[$kind])) {
+        $column = str_starts_with($kind, self::COLUMN) ? $this->columns->find($uid, substr($kind, strlen(self::COLUMN))) : null;
+        $labels = $column !== null ? ['title' => $column['name'], 'one' => 'entry', 'many' => 'entries'] : self::GROUP_KINDS[$kind] ?? null;
+        if ($labels === null) {
             return new DataDisplayResponse('Unknown group', Http::STATUS_NOT_FOUND, ['Content-Type' => 'text/plain']);
         }
         $this->refreshIndex($uid);
-        $labels = self::GROUP_KINDS[$kind];
-        $self = $this->feeds->route('group', array_filter(['kind' => $kind, 'letter' => $letter, 'sort' => $sort !== 'name' ? $sort : '']));
+        $nested = $column !== null ? $column['hierarchy'] : $kind === 'subject' && $this->columns->nestedSubjects($uid);
+        $parent = $nested ? $parent : '';
+        $here = array_filter(['kind' => $kind, 'parent' => $parent, 'letter' => $letter], static fn (string $v): bool => $v !== '');
+        $self = $this->feeds->route('group', $here + ($sort !== 'name' ? ['sort' => $sort] : []));
         $feed = [
-            'id' => 'urn:nextcloud-opds:group:' . $kind . ($letter !== '' ? ':' . $letter : ''),
-            'title' => $labels['title'] . ($letter !== '' ? ' – ' . $letter : ''),
+            'id' => 'urn:nextcloud-opds:group:' . $kind . ($parent !== '' ? ':' . sha1($parent) : '') . ($letter !== '' ? ':' . $letter : ''),
+            'title' => ($parent !== '' ? $parent : $labels['title']) . ($letter !== '' ? ' – ' . $letter : ''),
             'kind' => FeedBuilder::NAVIGATION,
             'updated' => $this->config->getLastScan($uid) ?: $this->time->getTime(),
             'self' => $self,
             'start' => $this->feeds->route('root'),
-            'up' => $letter !== '' ? $this->feeds->route('group', ['kind' => $kind]) : $this->feeds->route('root'),
+            'up' => $letter !== '' ? $this->feeds->route('group', array_diff_key($here, ['letter' => 1]))
+                : ($parent !== '' ? $this->feeds->route('group', ['kind' => $kind]) : $this->feeds->route('root')),
             'search' => $this->searchTemplate(),
             'entries' => [],
         ];
@@ -205,22 +228,42 @@ class OpdsController extends Controller {
             return $this->feedResponse($feed);
         }
         if ($kind === 'language') {
-            foreach ($this->repository->listColumn($uid, 'language') as $row) {
+            foreach ($this->repository->browse($uid, 'language') as $row) {
                 $feed['entries'][] = $this->nav('language:' . $row['value'], $this->languageName($row['value']),
                     $this->feeds->route('books', ['language' => $row['value']]), $this->count($row['count'], 'book'), FeedBuilder::ACQUISITION);
             }
             return $this->feedResponse($feed);
         }
+        if ($kind === 'rating') {
+            foreach ($this->repository->browse($uid, 'rating') as $row) {
+                $feed['entries'][] = $this->nav('rating:' . $row['value'], Columns::label('rating', $row['value']),
+                    $this->feeds->route('books', ['rating' => $row['value']]), $this->count($row['count'], 'book'), FeedBuilder::ACQUISITION);
+            }
+            return $this->feedResponse($feed);
+        }
 
-        // Possibly large term lists: author, subject, series, publisher
-        $rows = in_array($kind, ['author', 'subject'], true)
-            ? $this->repository->listTerms($uid, $kind, $letter !== '' ? $letter : null)
-            : $this->repository->listColumn($uid, $kind, $letter !== '' ? $letter : null);
+        // Possibly large term lists: author, subject, series, publisher and custom columns
+        if ($column !== null || in_array($kind, ['author', 'subject'], true)) {
+            $rows = $this->repository->listTerms($uid, $column !== null ? '#' . $column['key'] : $kind, $nested || $letter === '' ? null : $letter);
+            if ($nested) {
+                $rows = Columns::level($rows, $parent);
+                if ($letter !== '') {
+                    $rows = array_values(array_filter($rows, static fn (array $r): bool => Sorting::letterOf(Sorting::sortKey($r['label'])) === Sorting::letterOf($letter)));
+                }
+            }
+        } else {
+            $rows = $this->repository->listColumn($uid, $kind, $letter !== '' ? $letter : null);
+        }
+        $booksOf = fn (string $value, string $sort): string => $this->feeds->route('books',
+            ($column !== null ? ['column' => $column['key'], 'value' => $value] : [$kind => $value]) + ['sort' => $sort]);
+        if ($parent !== '' && $letter === '') {
+            $feed['entries'][] = $this->nav($kind . ':all:' . $parent, 'All books in ' . $parent, $booksOf($parent, 'title'), '', FeedBuilder::ACQUISITION);
+        }
 
         if ($letter === '' && count($rows) > $this->config->getGroupThreshold($uid)) {
             $groups = [];
             foreach ($rows as $row) {
-                $l = Sorting::letterOf($row['sort']);
+                $l = Sorting::letterOf(isset($row['label']) ? Sorting::sortKey($row['label']) : $row['sort']);
                 $groups[$l] = ($groups[$l] ?? 0) + 1;
             }
             ksort($groups);
@@ -231,7 +274,7 @@ class OpdsController extends Controller {
             }
             foreach ($groups as $l => $n) {
                 $feed['entries'][] = $this->nav($kind . ':letter:' . $l, $l === '#' ? '# (0-9, symbols)' : (string)$l,
-                    $this->feeds->route('group', ['kind' => $kind, 'letter' => $l]), $this->count($n, $labels['one'], $labels['many']), FeedBuilder::NAVIGATION);
+                    $this->feeds->route('group', ['letter' => $l] + $here), $this->count($n, $labels['one'], $labels['many']), FeedBuilder::NAVIGATION);
             }
             return $this->feedResponse($feed);
         }
@@ -240,8 +283,8 @@ class OpdsController extends Controller {
             usort($rows, static fn (array $a, array $b): int => [$b['count'], $a['sort']] <=> [$a['count'], $b['sort']]);
         }
         $feed['facets'] = [
-            ['group' => 'Sort by', 'title' => 'Name', 'active' => $sort !== 'count', 'href' => $this->feeds->route('group', array_filter(['kind' => $kind, 'letter' => $letter]))],
-            ['group' => 'Sort by', 'title' => 'Number of books', 'active' => $sort === 'count', 'href' => $this->feeds->route('group', array_filter(['kind' => $kind, 'letter' => $letter, 'sort' => 'count']))],
+            ['group' => 'Sort by', 'title' => 'Name', 'active' => $sort !== 'count', 'href' => $this->feeds->route('group', $here)],
+            ['group' => 'Sort by', 'title' => 'Number of books', 'active' => $sort === 'count', 'href' => $this->feeds->route('group', $here + ['sort' => 'count'])],
         ];
         $bookSort = $kind === 'series' ? 'series' : ($kind === 'author' ? 'series' : 'title');
         $seriesCounts = $kind === 'author' ? $this->repository->countSeriesByAuthor($uid) : [];
@@ -253,8 +296,13 @@ class OpdsController extends Controller {
                     $this->count($row['count'], 'book') . ', ' . $this->count($seriesCount, 'series', 'series'), FeedBuilder::NAVIGATION);
                 continue;
             }
-            $feed['entries'][] = $this->nav($kind . ':' . $row['value'], $row['value'],
-                $this->feeds->route('books', [$kind => $row['value'], 'sort' => $bookSort]), $this->count($row['count'], 'book'), FeedBuilder::ACQUISITION);
+            $label = Columns::label($column['type'] ?? '', $row['label'] ?? $row['value']);
+            if (($row['children'] ?? 0) > 0) {
+                $feed['entries'][] = $this->nav($kind . ':' . $row['value'], $label, $this->feeds->route('group', ['kind' => $kind, 'parent' => $row['value']]),
+                    $this->count($row['count'], 'book') . ', divided further', FeedBuilder::NAVIGATION);
+                continue;
+            }
+            $feed['entries'][] = $this->nav($kind . ':' . $row['value'], $label, $booksOf($row['value'], $bookSort), $this->count($row['count'], 'book'), FeedBuilder::ACQUISITION);
         }
         return $this->feedResponse($feed);
     }
@@ -511,7 +559,7 @@ class OpdsController extends Controller {
         array $prependEntries = [], string $routeName = 'books', array $routeParams = [],
     ): Response {
         $perPage = $this->config->getPageSize($uid);
-        $result = $this->repository->listBooks($uid, $filter, $sort, $order, $perPage, ($page - 1) * $perPage);
+        $result = $this->repository->listWorks($uid, $filter, $sort, $order, $perPage, ($page - 1) * $perPage);
         $total = $result['total'];
         $pages = max(1, (int)ceil($total / $perPage));
 
@@ -520,15 +568,15 @@ class OpdsController extends Controller {
         $base = ['sort' => $sort, 'order' => $order];
 
         $facets = [];
-        foreach (Config::SORTS as $key => $label) {
+        foreach ($this->columns->sorts($uid) as $key => $label) {
             $facets[] = ['group' => 'Sort by', 'title' => $label, 'active' => $key === $sort, 'href' => $link(['sort' => $key, 'order' => $order])];
         }
         $facets[] = ['group' => 'Order', 'title' => 'Ascending', 'active' => $order === 'asc', 'href' => $link(['sort' => $sort, 'order' => 'asc'])];
         $facets[] = ['group' => 'Order', 'title' => 'Descending', 'active' => $order === 'desc', 'href' => $link(['sort' => $sort, 'order' => 'desc'])];
 
         $entries = $prependEntries;
-        foreach ($result['books'] as $book) {
-            $entries[] = $this->bookEntry($book);
+        foreach ($result['works'] as $books) {
+            $entries[] = $this->bookEntry($books, $filter->format);
         }
 
         $feed = [
@@ -558,9 +606,23 @@ class OpdsController extends Controller {
         return $this->feedResponse($feed);
     }
 
-    /** @return array<string,mixed> */
-    private function bookEntry(Book $book): array {
-        $name = $book->name !== '' ? $book->name : 'book.' . $book->format;
+    /**
+     * @param non-empty-list<Book> $books the files of one book, the preferred format first
+     * @return array<string,mixed>
+     */
+    private function bookEntry(array $books, ?string $format = null): array {
+        $book = $books[0];
+        $cover = $book;
+        foreach ($books as $candidate) {
+            if ($candidate->hasCover) {
+                $cover = $candidate;
+                break;
+            }
+        }
+        if ($format !== null) {
+            // Readers tend to open the first link
+            usort($books, static fn (Book $a, Book $b): int => ($b->format === $format) <=> ($a->format === $format));
+        }
         $related = [];
         foreach ($book->authors as $author) {
             $related[] = ['href' => $this->feeds->route('books', ['author' => $author, 'sort' => 'series']), 'title' => 'More by ' . $author];
@@ -571,9 +633,12 @@ class OpdsController extends Controller {
         return [
             'type' => 'book',
             'book' => $book,
-            'download' => $this->feeds->route('download', ['id' => $book->fileId, 'name' => $name]),
-            'cover' => $this->feeds->route('cover', ['id' => $book->fileId]) . '?v=' . $book->coverVersion(),
-            'thumbnail' => $this->feeds->route('thumbnail', ['id' => $book->fileId]) . '?v=' . $book->coverVersion(),
+            'files' => array_map(fn (Book $b): array => [
+                'book' => $b,
+                'href' => $this->feeds->route('download', ['id' => $b->fileId, 'name' => $b->name !== '' ? $b->name : 'book.' . $b->format]),
+            ], $books),
+            'cover' => $cover->hasCover ? $this->feeds->route('cover', ['id' => $cover->fileId]) . '?v=' . $cover->coverVersion() : '',
+            'thumbnail' => $cover->hasCover ? $this->feeds->route('thumbnail', ['id' => $cover->fileId]) . '?v=' . $cover->coverVersion() : '',
             'related' => $related,
         ];
     }
@@ -591,7 +656,7 @@ class OpdsController extends Controller {
         ];
     }
 
-    private function titleFor(BookFilter $f): string {
+    private function titleFor(string $uid, BookFilter $f): string {
         if ($f->query !== null) {
             return 'Search: ' . $f->query;
         }
@@ -620,6 +685,13 @@ class OpdsController extends Controller {
         if ($f->year !== null) {
             $parts[] = 'from ' . $f->year;
         }
+        if ($f->rating !== null) {
+            $parts[] = 'rated ' . Columns::label('rating', (string)$f->rating);
+        }
+        if ($f->column !== null) {
+            $column = $this->columns->find($uid, $f->column);
+            $parts[] = 'with ' . ($column['name'] ?? $f->column) . ': ' . Columns::label($column['type'] ?? '', (string)$f->value);
+        }
         if ($f->letter !== null) {
             $parts[] = 'starting with ' . Sorting::letterOf($f->letter);
         }
@@ -633,10 +705,13 @@ class OpdsController extends Controller {
         if ($f->author !== null && $this->repository->listAuthorSeries($uid, $f->author)['series'] !== []) {
             return $this->feeds->route('author', ['name' => $f->author]);
         }
-        foreach (['author', 'subject', 'publisher', 'series', 'language', 'format'] as $kind) {
+        foreach (['author', 'subject', 'publisher', 'series', 'language', 'format', 'rating'] as $kind) {
             if ($f->{$kind} !== null) {
                 return $this->feeds->route('group', ['kind' => $kind]);
             }
+        }
+        if ($f->column !== null) {
+            return $this->feeds->route('group', ['kind' => self::COLUMN . $f->column]);
         }
         if ($f->year !== null) {
             return $this->feeds->route('group', ['kind' => 'year']);

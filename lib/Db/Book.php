@@ -11,6 +11,9 @@ use OCA\Opds\Metadata\FilenameExtractor;
  * and persisted by BookRepository.
  */
 class Book {
+    /** Types of custom columns whose values make a useful list */
+    public const BROWSABLE = ['text', 'enumeration', 'series', 'bool', 'rating'];
+
     public int $id = 0;
     public string $userId = '';
     public int $fileId = 0;
@@ -48,9 +51,81 @@ class Book {
     /** Revision of the Calibre record the metadata came from, '' for metadata read from the file */
     public string $metaRev = '';
 
+    // Only known for books in a Calibre library:
+
+    /** 0 to 10, which is twice the number of stars */
+    public int $rating = 0;
+    /** @var string[] all languages, $language is the first; empty when there is just that one */
+    public array $languages = [];
+    /** @var array<string,string> */
+    public array $identifiers = [];
+    /** @var array<string,string> */
+    public array $authorSorts = [];
+    /** "A.B" among the subjects means B below A */
+    public bool $subjectsNested = false;
+    /** @var list<array{key: string, name: string, type: string, values: list<string>, text: string, sorts: list<string>, nested: bool}> */
+    public array $custom = [];
+    /** Set when something else than the file name ties the formats together */
+    public string $workKey = '';
+
+    /** Short enough for the index, also for long labels. */
+    public static function columnKey(string $label): string {
+        return mb_strlen($label) <= 15 ? $label : '~' . substr(sha1($label), 0, 14);
+    }
+
+    /** @return string[] */
+    public function allLanguages(): array {
+        return $this->languages !== [] ? $this->languages : ($this->language !== '' ? [$this->language] : []);
+    }
+
+    /**
+     * What the book is listed under, besides the columns of its row.
+     *
+     * @return list<array{0: string, 1: string, 2: string}> kind, value, sort key
+     */
+    public function terms(): array {
+        $terms = [];
+        foreach ($this->authors as $author) {
+            $sort = $this->authorSorts[$author] ?? '';
+            $terms[] = ['author', $author, $sort !== '' ? Sorting::fold($sort) : Sorting::personSortKey($author)];
+        }
+        foreach ($this->subjects as $subject) {
+            foreach ($this->subjectsNested ? self::withParents($subject) : [$subject] as $value) {
+                $terms[] = ['subject', $value, Sorting::sortKey($value)];
+            }
+        }
+        foreach (array_slice($this->languages, 1) as $language) {
+            $terms[] = ['language', $language, $language];
+        }
+        foreach ($this->custom as $column) {
+            if (!in_array($column['type'], self::BROWSABLE, true)) {
+                continue;
+            }
+            foreach ($column['values'] as $i => $value) {
+                foreach ($column['nested'] ? self::withParents($value) : [$value] as $v) {
+                    $terms[] = ['#' . $column['key'], $v, ($column['sorts'][$i] ?? '') !== '' ? $column['sorts'][$i] : Sorting::titleSortKey($v)];
+                }
+            }
+        }
+        return $terms;
+    }
+
+    /** @return list<string> "A.B" -> "A", "A.B"; as in Calibre, "Dr. Who" is not divided */
+    private static function withParents(string $value): array {
+        $parts = array_values(array_filter(array_map('trim', explode('.', $value)), static fn (string $p): bool => $p !== ''));
+        if (implode('.', $parts) !== $value) {
+            return [$value];
+        }
+        $out = [];
+        foreach (array_keys($parts) as $i) {
+            $out[] = implode('.', array_slice($parts, 0, $i + 1));
+        }
+        return $out;
+    }
+
     /** Same value for the files of one book in different formats ("Emma.epub", "Emma.pdf"). */
     public function work(): string {
-        return sha1($this->parent . '/' . mb_strtolower(FilenameExtractor::stripExtension($this->name)));
+        return $this->workKey !== '' ? $this->workKey : sha1($this->parent . '/' . mb_strtolower(FilenameExtractor::stripExtension($this->name)));
     }
 
     /** Changes whenever the cover may look different; used to bypass browser caches. */

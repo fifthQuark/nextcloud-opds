@@ -121,9 +121,10 @@ class Importer {
             'tags' => $book->subjects,
             'publisher' => $book->publisher,
             'comments' => $book->description,
-            'identifiers' => $book->isbn !== '' ? ['isbn' => $book->isbn] : [],
+            'identifiers' => $book->identifiers + ($book->isbn !== '' ? ['isbn' => $book->isbn] : []),
+            'rating' => $book->rating,
         ];
-        foreach (['languages' => $book->language !== '' ? [$book->language] : [], 'pubdate' => $book->pubdate] as $key => $value) {
+        foreach (['languages' => $book->allLanguages(), 'pubdate' => $book->pubdate] as $key => $value) {
             try {
                 $this->fields->read([$key => $value]);
                 $in[$key] = $value;

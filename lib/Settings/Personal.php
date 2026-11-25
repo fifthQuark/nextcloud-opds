@@ -8,6 +8,7 @@ use OCA\Opds\AppInfo\Application;
 use OCA\Opds\Calibre\Sqlite;
 use OCA\Opds\Db\BookRepository;
 use OCA\Opds\News\NewsService;
+use OCA\Opds\Service\Columns;
 use OCA\Opds\Service\Config;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\IURLGenerator;
@@ -21,6 +22,7 @@ class Personal implements ISettings {
         private IURLGenerator $urlGenerator,
         private Config $config,
         private BookRepository $repository,
+        private Columns $columns,
         private NewsService $news,
     ) {
     }
@@ -50,13 +52,13 @@ class Personal implements ISettings {
 
         return new TemplateResponse(Application::APP_ID, 'personal', [
             'settings' => $this->config->getAll($uid),
-            'sorts' => Config::SORTS,
+            'sorts' => $this->columns->sorts($uid) + array_intersect_key(Config::SORTS, [$this->config->getDefaultSort($uid) => true]),
             'feedUrl' => $this->urlGenerator->linkToRouteAbsolute('opds.opds.root'),
             'appPasswordUrl' => $this->urlGenerator->linkToRouteAbsolute('settings.PersonalSettings.index', ['section' => 'security']),
             'libraryUrl' => $this->urlGenerator->linkToRoute('opds.library.index'),
             'calibre' => $this->config->isCalibreEnabled($uid) && Sqlite::available(),
             'calibreAvailable' => Sqlite::available(),
-            'bookCount' => $this->repository->count($uid),
+            'bookCount' => $this->repository->countWorks($uid),
             'lastScan' => $this->config->getLastScan($uid),
             'report' => $report,
             'userId' => $uid,

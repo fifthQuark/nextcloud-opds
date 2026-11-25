@@ -25,7 +25,11 @@ class Config {
         'language' => 'Language',
         'format' => 'Format',
         'size' => 'File size',
+        'rating' => 'Rating',
     ];
+
+    /** Sort keys that start with the highest value unless an order is given */
+    public const NEWEST_FIRST = ['added', 'modified', 'date', 'rating'];
 
     public function __construct(
         private IConfig $config,

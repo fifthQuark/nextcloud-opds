@@ -15,7 +15,13 @@ class CalibreDb {
 
     public const FIELDS = ['title', 'sort', 'authors', 'author_sort', 'series', 'series_index', 'tags', 'publisher', 'pubdate', 'languages', 'comments', 'rating', 'identifiers'];
 
+    /** Part of every revision. Increase it when more is read from a record, so that known books are read again */
+    private const READER = 2;
+
     private Sqlite $db;
+    /** @var list<array{id: int, label: string, name: string, type: string, normalized: bool, hierarchy: bool, order: array<string,int>}>|null */
+    private ?array $columns = null;
+    private ?string $structure = null;
 
     public function __construct(string $path, private \DateTimeZone $timezone) {
         $this->db = new Sqlite($path);
@@ -134,7 +140,7 @@ class CalibreDb {
     public function revisions(): array {
         $map = [];
         foreach ($this->db->query('SELECT id, last_modified, path FROM books') as $row) {
-            $map[(int)$row['id']] = self::revision($row);
+            $map[(int)$row['id']] = $this->revision($row);
         }
         return $map;
     }
@@ -154,6 +160,12 @@ class CalibreDb {
         foreach ($this->db->query('SELECT type, val FROM identifiers WHERE book = ? ORDER BY type', [$id]) as $r) {
             $identifiers[(string)$r['type']] = (string)$r['val'];
         }
+        $authorSorts = [];
+        foreach ($this->db->query('SELECT a.name, a.sort FROM books_authors_link l JOIN authors a ON a.id = l.author WHERE l.book = ?', [$id]) as $r) {
+            if (trim((string)$r['sort']) !== '') {
+                $authorSorts[str_replace('|', ',', (string)$r['name'])] = str_replace('|', ',', (string)$r['sort']);
+            }
+        }
         $formats = [];
         foreach ($this->db->query('SELECT format, name FROM data WHERE book = ? ORDER BY format', [$id]) as $r) {
             $formats[strtoupper((string)$r['format'])] = (string)$r['name'];
@@ -165,13 +177,14 @@ class CalibreDb {
             'path' => (string)$row['path'],
             'has_cover' => (bool)$row['has_cover'],
             'timestamp' => (string)$row['timestamp'],
-            'rev' => self::revision($row),
+            'rev' => $this->revision($row),
             'title' => (string)$row['title'],
             'sort' => (string)$row['sort'],
             // Calibre stores a comma inside a name as |
             'authors' => array_map(static fn (string $a): string => str_replace('|', ',', $a),
                 $column('SELECT a.name AS v FROM books_authors_link l JOIN authors a ON a.id = l.author WHERE l.book = ? ORDER BY l.id')),
             'author_sort' => (string)$row['author_sort'],
+            'author_sorts' => $authorSorts,
             'series' => $series,
             'series_index' => $series !== '' ? (float)$row['series_index'] : 0.0,
             'tags' => $column('SELECT t.name AS v FROM books_tags_link l JOIN tags t ON t.id = l.tag WHERE l.book = ? ORDER BY t.name'),
@@ -183,7 +196,97 @@ class CalibreDb {
             'rating' => (int)($column('SELECT r.rating AS v FROM books_ratings_link l JOIN ratings r ON r.id = l.rating WHERE l.book = ?')[0] ?? 0),
             'identifiers' => $identifiers,
             'formats' => $formats,
+            'custom' => $this->custom($id),
+            'tags_hierarchy' => $this->tagsHierarchy(),
         ];
+    }
+
+    /**
+     * Custom columns. Columns built from a template ("composite") have no stored values.
+     *
+     * @return list<array{id: int, label: string, name: string, type: string, normalized: bool, hierarchy: bool, order: array<string,int>}>
+     */
+    public function columns(): array {
+        if ($this->columns !== null) {
+            return $this->columns;
+        }
+        $this->columns = [];
+        $nested = $this->hierarchies();
+        foreach ($this->optional("SELECT id, label, name, datatype, normalized, display FROM custom_columns WHERE mark_for_delete = 0 AND datatype <> 'composite' ORDER BY id") as $row) {
+            $display = json_decode((string)$row['display'], true);
+            $values = is_array($display) && is_array($display['enum_values'] ?? null) ? array_values(array_filter($display['enum_values'], 'is_string')) : [];
+            $this->columns[] = [
+                'id' => (int)$row['id'],
+                'label' => (string)$row['label'],
+                'name' => (string)$row['name'],
+                'type' => (string)$row['datatype'],
+                'normalized' => (bool)$row['normalized'],
+                'hierarchy' => $row['datatype'] === 'text' && in_array('#' . $row['label'], $nested, true),
+                'order' => array_flip($values),
+            ];
+        }
+        return $this->columns;
+    }
+
+    public function tagsHierarchy(): bool {
+        return in_array('tags', $this->hierarchies(), true);
+    }
+
+    /** @return list<string> categories in which "A.B" means B below A: "tags", "#label" */
+    private function hierarchies(): array {
+        $json = $this->optional("SELECT val FROM preferences WHERE key = 'categories_using_hierarchy'")[0]['val'] ?? '';
+        $list = json_decode((string)$json, true);
+        return is_array($list) ? array_values(array_filter($list, 'is_string')) : [];
+    }
+
+    /** @return list<array{label: string, name: string, type: string, hierarchy: bool, order: array<string,int>, values: list<string>, text: string}> columns in which the book has a value */
+    private function custom(int $id): array {
+        $out = [];
+        foreach ($this->columns() as $column) {
+            $table = 'custom_column_' . $column['id'];
+            $extra = $column['type'] === 'series' ? ', l.extra AS x' : '';
+            $rows = $this->optional($column['normalized']
+                ? "SELECT c.value AS v$extra FROM books_{$table}_link l JOIN $table c ON c.id = l.value WHERE l.book = ? ORDER BY l.id"
+                : "SELECT value AS v FROM $table WHERE book = ?", [$id]);
+            $values = [];
+            $texts = [];
+            foreach ($rows as $row) {
+                $value = trim((string)match ($column['type']) {
+                    'bool' => $row['v'] === null ? '' : ((int)$row['v'] === 1 ? 'Yes' : 'No'),
+                    'datetime' => $this->dateFromDb((string)$row['v']),
+                    'rating' => (int)$row['v'] > 0 ? (int)$row['v'] : '',
+                    'float' => is_numeric($row['v']) ? self::number((float)$row['v']) : '',
+                    default => $row['v'],
+                });
+                if ($value !== '') {
+                    $values[] = $value;
+                    $texts[] = isset($row['x']) ? $value . ' [' . self::number((float)$row['x']) . ']' : $value;
+                }
+            }
+            if ($values !== []) {
+                $out[] = ['label' => $column['label'], 'name' => $column['name'], 'type' => $column['type'], 'hierarchy' => $column['hierarchy'],
+                    'order' => $column['order'], 'values' => $values, 'text' => implode(', ', $texts)];
+            }
+        }
+        return $out;
+    }
+
+    private static function number(float $n): string {
+        return floor($n) === $n && abs($n) < 1e15 ? sprintf('%.0F', $n) : rtrim(rtrim(sprintf('%.4F', $n), '0'), '.');
+    }
+
+    /**
+     * For tables that are not needed to show a book.
+     *
+     * @param list<mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function optional(string $sql, array $params = []): array {
+        try {
+            return $this->db->query($sql, $params);
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     /** Id of a book with the same title and first author, 0 if there is none. */
@@ -411,8 +514,10 @@ class CalibreDb {
     }
 
     /** @param array<string,mixed> $row */
-    private static function revision(array $row): string {
-        return 'c' . substr(sha1($row['id'] . '|' . $row['last_modified'] . '|' . $row['path']), 0, 24);
+    private function revision(array $row): string {
+        // Removing a column or changing how one is shown does not touch the books themselves
+        $this->structure ??= sha1(json_encode([self::READER, $this->columns(), $this->hierarchies()], JSON_PARTIAL_OUTPUT_ON_ERROR) ?: '');
+        return 'c' . substr(sha1($row['id'] . '|' . $row['last_modified'] . '|' . $row['path'] . '|' . $this->structure), 0, 24);
     }
 
     private static function now(?int $time = null): string {

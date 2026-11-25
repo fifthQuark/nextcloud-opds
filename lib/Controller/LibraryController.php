@@ -12,6 +12,7 @@ use OCA\Opds\Calibre\Sqlite;
 use OCA\Opds\Db\Book;
 use OCA\Opds\Db\BookFilter;
 use OCA\Opds\Db\BookRepository;
+use OCA\Opds\Service\Columns;
 use OCA\Opds\Service\Config;
 use OCA\Opds\Service\LibraryScanner;
 use OCP\AppFramework\Controller;
@@ -34,7 +35,9 @@ use Psr\Log\LoggerInterface;
  */
 class LibraryController extends Controller {
     private const PAGE_SIZE = 60;
-    private const KINDS = ['author', 'series', 'subject', 'publisher', 'language', 'year', 'format'];
+    private const KINDS = ['author', 'series', 'subject', 'publisher', 'language', 'year', 'format', 'rating'];
+    /** Kinds of lists for custom columns start with this */
+    private const COLUMN = 'column-';
 
     public function __construct(
         IRequest $request,
@@ -44,6 +47,7 @@ class LibraryController extends Controller {
         private IInitialState $initialState,
         private Config $config,
         private BookRepository $repository,
+        private Columns $columns,
         private LibraryScanner $scanner,
         private CalibreLibrary $calibre,
         private LoggerInterface $logger,
@@ -60,14 +64,14 @@ class LibraryController extends Controller {
         $this->initialState->provideInitialState('library', [
             'root' => $this->config->getRoot($uid),
             'total' => $this->repository->countWorks($uid),
-            'sorts' => Config::SORTS,
+            'newestFirst' => Config::NEWEST_FIRST,
             'sort' => $this->config->getDefaultSort($uid),
             'order' => $this->config->getDefaultOrder($uid),
             'pageSize' => self::PAGE_SIZE,
             'settingsUrl' => $this->urls->linkToRoute('settings.PersonalSettings.index', ['section' => Application::APP_ID]),
             'calibre' => $this->config->isCalibreEnabled($uid) && Sqlite::available(),
             'languages' => Languages::names(),
-        ]);
+        ] + $this->lists($uid));
         return new TemplateResponse(Application::APP_ID, 'library');
     }
 
@@ -76,6 +80,7 @@ class LibraryController extends Controller {
         string $sort = '', string $order = '', int $page = 1,
         string $author = '', string $subject = '', string $publisher = '', string $series = '',
         string $language = '', string $format = '', int $year = 0, string $q = '', bool $standalone = false,
+        int $rating = 0, string $column = '', string $value = '',
     ): JSONResponse {
         $uid = $this->uid();
         $filter = new BookFilter();
@@ -88,11 +93,16 @@ class LibraryController extends Controller {
         $filter->format = $format !== '' ? $format : null;
         $filter->year = $year > 0 ? $year : null;
         $filter->query = trim($q) !== '' ? trim($q) : null;
+        $filter->rating = $rating > 0 ? $rating : null;
+        if ($column !== '' && $value !== '') {
+            $filter->column = $column;
+            $filter->value = $value;
+        }
         if (!array_key_exists($sort, Config::SORTS)) {
             $sort = ($filter->series !== null || $filter->author !== null) ? 'series' : $this->config->getDefaultSort($uid);
         }
         if ($order !== 'asc' && $order !== 'desc') {
-            $order = in_array($sort, ['added', 'modified', 'date'], true) ? 'desc' : $this->config->getDefaultOrder($uid);
+            $order = in_array($sort, Config::NEWEST_FIRST, true) ? 'desc' : $this->config->getDefaultOrder($uid);
         }
         $page = max(1, $page);
         $result = $this->repository->listWorks($uid, $filter, $sort, $order, self::PAGE_SIZE, ($page - 1) * self::PAGE_SIZE);
@@ -108,11 +118,20 @@ class LibraryController extends Controller {
 
     #[NoAdminRequired]
     public function browse(string $kind): JSONResponse {
-        if (!in_array($kind, self::KINDS, true)) {
+        $uid = $this->uid();
+        $column = str_starts_with($kind, self::COLUMN) ? $this->columns->find($uid, substr($kind, strlen(self::COLUMN))) : null;
+        if ($column === null && !in_array($kind, self::KINDS, true)) {
             return new JSONResponse(['error' => 'Unknown list'], Http::STATUS_NOT_FOUND);
         }
-        $rows = $this->repository->browse($this->uid(), $kind === 'year' ? 'pubyear' : $kind);
-        return new JSONResponse(['entries' => array_map(fn (array $row): array => $this->entry($row, $kind), $rows)]);
+        $rows = $this->repository->browse($uid, match (true) {
+            $column !== null => '#' . $column['key'],
+            $kind === 'year' => 'pubyear',
+            default => $kind,
+        });
+        return new JSONResponse([
+            'entries' => array_map(fn (array $row): array => $this->entry($row, $column['type'] ?? $kind), $rows),
+            'nested' => $column !== null ? $column['hierarchy'] : $kind === 'subject' && $this->columns->nestedSubjects($uid),
+        ]);
     }
 
     /** Series of one author and the number of books outside of any series. */
@@ -147,11 +166,21 @@ class LibraryController extends Controller {
         return new JSONResponse($this->card($books) + [
             'publisher' => $main->publisher,
             'subjects' => $main->subjects,
-            'language' => $main->language,
-            'languageName' => $this->languageName($main->language),
+            'languages' => array_map(fn (string $code): array => ['code' => $code, 'name' => $this->languageName($code)], $main->allLanguages()),
             'pubdate' => $main->pubdate,
             'description' => $main->description,
             'isbn' => $main->isbn,
+            'rating' => $main->rating,
+            'identifiers' => array_map(static fn ($type, string $value): string => $type . ':' . $value,
+                array_keys(array_diff_key($main->identifiers, ['isbn' => 1])), array_values(array_diff_key($main->identifiers, ['isbn' => 1]))),
+            'columns' => array_map(static fn (array $c): array => [
+                'key' => $c['key'],
+                'name' => $c['name'],
+                'type' => $c['type'],
+                'text' => Columns::label($c['type'], $c['text']),
+                'values' => in_array($c['type'], Book::BROWSABLE, true)
+                    ? array_map(static fn (string $v): array => ['value' => $v, 'label' => Columns::label($c['type'], $v)], $c['values']) : [],
+            ], $main->custom),
             'folder' => $main->parent,
             'added' => $main->indexedAt,
             'calibre' => $this->calibreInfo($uid, $main),
@@ -172,7 +201,7 @@ class LibraryController extends Controller {
             'error' => $result->error,
             'summary' => $result->summary(),
             'total' => $this->repository->countWorks($uid),
-        ]);
+        ] + $this->lists($uid));
     }
 
     // -------------------------------------------------------------- internals
@@ -223,11 +252,25 @@ class LibraryController extends Controller {
             'label' => match ($kind) {
                 'language' => $this->languageName($row['value']),
                 'format' => strtoupper($row['value']),
+                'rating' => Columns::label('rating', $row['value']),
                 default => $row['value'],
             },
             'sort' => $row['sort'],
             'count' => $row['count'],
             'covers' => array_map(fn (Book $b): string => $this->coverUrl($b, 'thumbnail'), $row['covers']),
+        ];
+    }
+
+    /**
+     * What depends on the books that are there.
+     *
+     * @return array<string,mixed>
+     */
+    private function lists(string $uid): array {
+        return [
+            'sorts' => $this->columns->sorts($uid),
+            'rated' => $this->repository->hasRatings($uid),
+            'columns' => array_map(static fn (array $c): array => ['kind' => self::COLUMN . $c['key'], 'name' => $c['name']], $this->columns->browsable($uid)),
         ];
     }
 

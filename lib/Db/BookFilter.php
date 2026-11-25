@@ -21,6 +21,11 @@ class BookFilter {
     public ?string $letter = null;
     /** Exact parent folder (relative to the user's home) */
     public ?string $folder = null;
+    /** Calibre rating, 1 to 10 */
+    public ?int $rating = null;
+    /** Key of a custom column, together with $value */
+    public ?string $column = null;
+    public ?string $value = null;
     /** Free text search over title, author, subjects, series and publisher */
     public ?string $query = null;
 

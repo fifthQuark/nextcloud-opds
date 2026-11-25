@@ -195,10 +195,12 @@ class FeedBuilder {
 
     /** @param array<string,mixed> $entry */
     private function bookEntry(\XMLWriter $w, Book $book, array $entry): void {
+        /** @var list<array{book: Book, href: string}> $files */
+        $files = $entry['files'];
         $w->startElement('entry');
         $w->writeElement('title', $book->title);
         $w->writeElement('id', 'urn:nextcloud-opds:book:' . $book->fileId);
-        $w->writeElement('updated', $this->date($book->mtime));
+        $w->writeElement('updated', $this->date(max(array_map(static fn (array $f): int => $f['book']->mtime, $files))));
         foreach ($book->authors as $author) {
             $w->startElement('author');
             $w->writeElement('name', $author);
@@ -207,8 +209,8 @@ class FeedBuilder {
             }
             $w->endElement();
         }
-        if ($book->language !== '') {
-            $w->writeElementNs('dc', 'language', null, $book->language);
+        foreach ($book->allLanguages() as $language) {
+            $w->writeElementNs('dc', 'language', null, $language);
         }
         if ($book->publisher !== '') {
             $w->writeElementNs('dc', 'publisher', null, $book->publisher);
@@ -220,7 +222,14 @@ class FeedBuilder {
         if ($book->isbn !== '') {
             $w->writeElementNs('dc', 'identifier', null, 'urn:isbn:' . $book->isbn);
         }
-        $w->writeElementNs('dc', 'format', null, strtoupper($book->format));
+        foreach ($book->identifiers as $type => $value) {
+            if ((string)$type !== 'isbn') {
+                $w->writeElementNs('dc', 'identifier', null, $type . ':' . $value);
+            }
+        }
+        foreach ($files as $file) {
+            $w->writeElementNs('dc', 'format', null, strtoupper($file['book']->format));
+        }
         if ($book->series !== '') {
             $w->writeElementNs('dc', 'isPartOf', null, $book->series);
         }
@@ -239,14 +248,26 @@ class FeedBuilder {
         if ($book->series !== '') {
             $summaryParts[] = 'Series: ' . $book->series . ($book->seriesIndex > 0 ? ' #' . $this->number($book->seriesIndex) : '');
         }
+        if ($book->rating > 0) {
+            $summaryParts[] = 'Rating: ' . Columns::label('rating', (string)$book->rating);
+        }
+        $custom = [];
+        foreach ($book->custom as $column) {
+            if ($column['type'] !== 'comments') {
+                $custom[] = $column['name'] . ': ' . Columns::label($column['type'], $column['text']);
+            }
+        }
+        if ($custom !== []) {
+            $summaryParts[] = implode("\n", $custom);
+        }
         if ($book->description !== '') {
             $summaryParts[] = $book->description;
         }
         $details = array_filter([
-            strtoupper($book->format) . ', ' . $this->size($book->size),
+            implode(' / ', array_map(fn (array $f): string => strtoupper($f['book']->format) . ', ' . $this->size($f['book']->size), $files)),
             $book->publisher !== '' ? 'Publisher: ' . $book->publisher : '',
             $book->pubdate !== '' ? 'Published: ' . $book->pubdate : '',
-            $book->language !== '' ? 'Language: ' . $book->language : '',
+            $book->allLanguages() !== [] ? 'Language: ' . implode(', ', $book->allLanguages()) : '',
         ]);
         $summaryParts[] = implode(' · ', $details);
         $w->startElement('summary');
@@ -254,9 +275,12 @@ class FeedBuilder {
         $w->text(implode("\n\n", $summaryParts));
         $w->endElement();
 
-        $mime = self::mimeForFormat($book->format, $book->mimetype);
-        $this->link($w, 'http://opds-spec.org/acquisition', (string)$entry['download'], $mime, 'Download ' . strtoupper($book->format) . ' (' . $this->size($book->size) . ')');
-        if ($book->hasCover && !empty($entry['cover'])) {
+        foreach ($files as $file) {
+            $f = $file['book'];
+            $this->link($w, 'http://opds-spec.org/acquisition', $file['href'], self::mimeForFormat($f->format, $f->mimetype),
+                'Download ' . strtoupper($f->format) . ' (' . $this->size($f->size) . ')');
+        }
+        if ($entry['cover'] !== '') {
             $this->link($w, 'http://opds-spec.org/image', (string)$entry['cover'], 'image/jpeg');
             $this->link($w, 'http://opds-spec.org/image/thumbnail', (string)$entry['thumbnail'], 'image/jpeg');
         }

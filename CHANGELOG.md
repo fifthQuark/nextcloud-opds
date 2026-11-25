@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.0 – 2026-11-25
+
+* OPDS catalog: a book with several formats is now one entry with a download link for each format,
+  as in the book browser. The numbers of books in lists count books instead of files.
+* Calibre beta: the formats of a book are tied together by Calibre's record instead of the file name.
+* Calibre beta: ratings, all languages of a book, identifiers, the sort names of authors and custom
+  columns are read. There are lists by rating and by custom columns (text, fixed values, series,
+  yes/no, rating), and books can be sorted by rating. Columns built from a template are not shown.
+* Calibre beta: tags and text columns that Calibre is set to show as a hierarchy ("Fiction.Fantasy")
+  are nested in lists as well.
+* Calibre beta: files in the folder of a book that are not among its formats in Calibre are no longer
+  listed as books of their own.
+* All books of Calibre libraries are read again once after the update.
+
 ## 1.5.0 – 2026-11-25
 
 * New setting *Show hidden files*: files and folders whose name starts with a dot are now left out
