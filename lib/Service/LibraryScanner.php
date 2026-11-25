@@ -67,7 +67,7 @@ class LibraryScanner {
                 return $this->finish($uid, $result, $start, $now);
             }
 
-            $files = $this->collectFiles($root, $this->config->getExtensions($uid));
+            $files = $this->collectFiles($root, $this->config->getExtensions($uid), $this->config->showsHidden($uid));
             $result->total = count($files);
             $existing = $this->repository->getStates($uid);
             $failed = [];
@@ -174,7 +174,7 @@ class LibraryScanner {
      * @param string[] $extensions
      * @return File[]
      */
-    private function collectFiles(Folder $root, array $extensions): array {
+    private function collectFiles(Folder $root, array $extensions, bool $hidden): array {
         $files = [];
         foreach ($extensions as $ext) {
             foreach ($root->search('.' . $ext) as $node) {
@@ -183,6 +183,9 @@ class LibraryScanner {
                 }
                 // .caltrash holds books deleted in Calibre
                 if (FilenameExtractor::format($node->getName()) !== $ext || str_contains($node->getPath(), '/.caltrash/')) {
+                    continue;
+                }
+                if (!$hidden && FilenameExtractor::isHidden($root->getRelativePath($node->getPath()) ?? '')) {
                     continue;
                 }
                 $files[$node->getId()] = $node;

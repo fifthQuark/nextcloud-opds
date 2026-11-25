@@ -22,6 +22,8 @@ e-reader apps can browse, sort, search and download from. Readers sign in with a
   a page with covers, search and filters. See [Book browser](#book-browser).
 * **Calibre libraries** (beta, off by default): use and edit the metadata and covers of a Calibre
   library. See [Calibre libraries](#calibre-libraries-beta).
+* **Hidden files** (files and folders whose name starts with a dot) are left out unless *Show
+  hidden files* is turned on in the settings.
 * The index lives in two database tables and is refreshed incrementally: on catalog requests
   (at most every *n* minutes, with a time budget so requests stay fast), by a background job
   every six hours, from the settings page, or with `occ opds:scan`.
@@ -142,7 +144,7 @@ the library folder:
   library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
   inside it. Nothing is copied, reader links keep working, and folders that become empty are
   removed. If the folder is a Calibre library already, books that Calibre does not know are added.
-  Left where they are: files in folders shared with you or on external storage, files you may not
+  Left where they are: hidden files, files in folders shared with you or on external storage, files you may not
   move, books in other Calibre libraries below the folder, extra files in the folder of a book, and
   second files of the same format. It can be interrupted and continued.
 * **New library:** *Create and copy books* makes a Calibre library in a new or empty folder
@@ -172,7 +174,8 @@ occ user:setting alice opds root /Library   # set the folder without the web UI
 
 Settings keys (per user, app id `opds`): `root`, `extensions`, `filename_pattern`
 (`author-title`, `title-author`, `title`), `default_sort`, `default_order`, `page_size`,
-`group_threshold`, `scan_interval` (minutes, `0` disables request-triggered scans).
+`group_threshold`, `scan_interval` (minutes, `0` disables request-triggered scans), `show_hidden`
+(`0` or `1`; takes effect with the next scan).
 
 ## How metadata is mapped
 
@@ -201,7 +204,8 @@ sorts people by last name.
   Nextcloud's brute-force protection, so wait a while after fixing the password.
 * **New files do not show up.** Request-triggered scans run at most every *scan_interval*
   minutes and stop after 20 seconds, continuing on the next request. Run `occ opds:scan` for
-  the initial import of a large library, or press the scan button in the settings.
+  the initial import of a large library, or press the scan button in the settings. Files and
+  folders whose name starts with a dot need *Show hidden files*.
 * **No PDF covers.** Add `OC\Preview\PDF` to `enabledPreviewProviders` in `config.php` and
   make sure Imagick with Ghostscript is installed.
 * **Wrong title/author for a file.** The app only reads what is embedded in the file; fix the

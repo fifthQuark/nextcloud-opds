@@ -37,6 +37,7 @@ class SettingsController extends Controller {
     public function save(
         string $root = '', string $page_size = '', string $default_sort = '', string $default_order = '',
         string $extensions = '', string $filename_pattern = '', string $group_threshold = '', string $scan_interval = '',
+        ?bool $show_hidden = null,
     ): JSONResponse {
         $uid = $this->uid();
         $root = '/' . trim(str_replace('\\', '/', $root), '/');
@@ -60,11 +61,17 @@ class SettingsController extends Controller {
             'group_threshold' => $group_threshold,
             'scan_interval' => $scan_interval,
         ]);
+        if ($show_hidden !== null) {
+            $this->config->setShowHidden($uid, $show_hidden);
+        }
         $after = $this->config->getAll($uid);
 
         // A different folder, extension list or filename rule changes what is indexed
         if ($before['root'] !== $after['root'] || $before['extensions'] !== $after['extensions'] || $before['filename_pattern'] !== $after['filename_pattern']) {
             $this->scanner->reset($uid);
+        } elseif ($before['show_hidden'] !== $after['show_hidden']) {
+            // The other books stay indexed; the next visit adds or removes the hidden ones
+            $this->config->setLastScan($uid, 0);
         }
         return new JSONResponse(['settings' => $after]);
     }

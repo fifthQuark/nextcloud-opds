@@ -51,6 +51,12 @@ class CalibreLibrary {
 
     // ---------------------------------------------------------------- finding
 
+    /** Whether a file belongs to the catalog: inside its folder, and not hidden unless the user wants those. */
+    public function isListed(string $uid, Node $node): bool {
+        $path = $this->catalogFolder($uid)?->getRelativePath($node->getPath());
+        return $path !== null && ($this->config->showsHidden($uid) || !FilenameExtractor::isHidden($path));
+    }
+
     /** @return list<Folder> folders with a metadata.db in or below the catalog folder */
     public function findAll(string $uid): array {
         $root = $this->catalogFolder($uid);
@@ -59,7 +65,8 @@ class CalibreLibrary {
             return $out;
         }
         foreach ($root->search(self::DB) as $node) {
-            if ($node instanceof File && $node->getName() === self::DB && !str_contains($node->getPath(), '/.cal')) {
+            if ($node instanceof File && $node->getName() === self::DB && !str_contains($node->getPath(), '/.cal')
+                && $this->isListed($uid, $node)) {
                 $parent = $node->getParent();
                 if ($parent instanceof Folder) {
                     $out[$parent->getPath()] = $parent;
@@ -294,6 +301,11 @@ class CalibreLibrary {
                 if (str_starts_with($file->getPath(), $other)) {
                     return false;
                 }
+            }
+            // Shown or not, what was hidden must not end up in a folder that everyone sees
+            if (FilenameExtractor::isHidden($path)) {
+                $skipped++;
+                return false;
             }
             // Extra files of a book that Calibre does not list as a format
             for ($folder = dirname($path); $folder !== '.'; $folder = dirname($folder)) {

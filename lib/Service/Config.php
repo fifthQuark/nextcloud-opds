@@ -78,6 +78,15 @@ class Config {
         return max(0, (int)$this->config->getUserValue($uid, Application::APP_ID, 'scan_interval', '30'));
     }
 
+    /** Whether files and folders whose name starts with a dot are part of the library. */
+    public function showsHidden(string $uid): bool {
+        return $this->config->getUserValue($uid, Application::APP_ID, 'show_hidden', '0') === '1';
+    }
+
+    public function setShowHidden(string $uid, bool $show): void {
+        $this->config->setUserValue($uid, Application::APP_ID, 'show_hidden', $show ? '1' : '0');
+    }
+
     public function getLastScan(string $uid): int {
         return (int)$this->config->getUserValue($uid, Application::APP_ID, 'last_scan', '0');
     }
@@ -234,6 +243,7 @@ class Config {
             'filename_pattern' => $this->getFilenamePattern($uid),
             'group_threshold' => (string)$this->getGroupThreshold($uid),
             'scan_interval' => (string)$this->getScanInterval($uid),
+            'show_hidden' => $this->showsHidden($uid) ? '1' : '0',
         ];
     }
 

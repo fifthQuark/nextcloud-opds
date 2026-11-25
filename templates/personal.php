@@ -51,6 +51,13 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
             </select>
             <p class="settings-hint">Used when a file carries no embedded metadata (plain PDFs, TXT, …).</p>
         </div>
+
+        <span class="opds-label">Hidden files</span>
+        <div>
+            <input type="checkbox" class="checkbox" id="opds-show-hidden" <?php if ($s['show_hidden'] === '1') { echo 'checked'; } ?>>
+            <label for="opds-show-hidden">Show hidden files</label>
+            <p class="settings-hint">Files and folders whose name starts with a dot, such as <code>.Book.epub</code> or everything in <code>.private</code>.</p>
+        </div>
     </div>
 
     <h3>Catalog</h3>

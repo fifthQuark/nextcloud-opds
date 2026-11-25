@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 – 2026-11-25
+
+* New setting *Show hidden files*: files and folders whose name starts with a dot are now left out
+  of the catalog and the book browser unless it is turned on. Until now they were always listed, so
+  turn it on if your books are in such a folder. A library folder that is itself hidden keeps
+  working, only what is hidden inside it counts.
+* Calibre beta: *Convert the current folder* never moves hidden files. In 1.4.0 it also moved the
+  contents of folders such as Syncthing's `.stfolder` and `.stversions` and then removed these
+  folders. If you have converted a folder that Syncthing synchronises, create `.stfolder` again.
+
 ## 1.4.0 – 2026-11-25
 
 * Calibre beta: the current library folder itself can be made a Calibre library with *Convert the

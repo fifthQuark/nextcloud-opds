@@ -53,6 +53,7 @@
             page_size: $('opds-page-size').value,
             group_threshold: $('opds-group-threshold').value,
             scan_interval: $('opds-scan-interval').value,
+            show_hidden: $('opds-show-hidden').checked,
         };
     }
 
@@ -237,7 +238,7 @@
                     setStatus(status, 'Nothing to move: all books are in the Calibre library ' + path + ' already', 'ok');
                     return;
                 }
-                showSum(sum, 'moved into the Calibre library ' + path, 'files left where they are (extra files of a book, or files you may not move or that are shared with you)');
+                showSum(sum, 'moved into the Calibre library ' + path, 'files left where they are (hidden files, extra files of a book, or files you may not move or that are shared with you)');
             } catch (e) {
                 setStatus(status, e.message + (started ? ' Press the button again to continue.' : ''), 'error');
             } finally {

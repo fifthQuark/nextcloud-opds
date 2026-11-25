@@ -54,6 +54,11 @@ class FilenameExtractor {
         return $pos === false || $pos === 0 ? $fileName : substr($fileName, 0, $pos);
     }
 
+    /** @param string $path inside the library folder; files in a hidden folder are hidden as well */
+    public static function isHidden(string $path): bool {
+        return str_contains('/' . $path, '/.');
+    }
+
     /** Lower-case extension, honouring compound ones ("kepub.epub" -> "epub", "fb2.zip" -> "fb2"). */
     public static function format(string $fileName): string {
         $lower = strtolower($fileName);

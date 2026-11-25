@@ -63,7 +63,8 @@ class Importer {
         $files = [];
         foreach ($books as $book) {
             foreach ($this->rootFolder->getUserFolder($uid)->getById($book->fileId) as $node) {
-                if ($node instanceof File && ($wanted === null || $wanted($node))) {
+                // The index may be older than the choice to leave out hidden files
+                if ($node instanceof File && $this->calibre->isListed($uid, $node) && ($wanted === null || $wanted($node))) {
                     $files[] = $node;
                     break;
                 }
