@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.8.0 – unreleased
+## 1.8.0 – 2026-11-26
 
 * Calibre beta: a library with a conflict copy of `metadata.db` (Nextcloud, Syncthing and others name
   them "…conflict…") can only be read until the copy is deleted. The book page and the settings say so.
