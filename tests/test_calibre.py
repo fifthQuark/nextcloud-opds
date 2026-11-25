@@ -190,8 +190,8 @@ class CalibreTest(unittest.TestCase):
         self.assertEqual(EDIT['title'], meta['Title'])
         self.assertTrue(meta['Author(s)'].startswith("Zoë Änder & Pat O'Neil"), meta['Author(s)'])
         series, number = meta['Series'].rsplit(' #', 1)
-        self.assertEqual(('Neue Reihe', 4.5, 'Verlag', 'Alpha, Beta & Co', 'deu, eng', 'goodreads:99, isbn:9783161484100'),
-                         (series, float(number), meta['Publisher'], meta['Tags'], meta['Languages'], meta['Identifiers']))
+        self.assertEqual(('Neue Reihe', 4.5, 'Verlag', 'Alpha, Beta & Co', 'deu, eng', {'goodreads:99', 'isbn:9783161484100'}),
+                         (series, float(number), meta['Publisher'], meta['Tags'], meta['Languages'], set(meta['Identifiers'].split(', '))))
 
     def test_convert_and_copy(self):
         loose = self.dir('loose-' + uuid.uuid4().hex[:8])
