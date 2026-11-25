@@ -3,6 +3,7 @@
 *.swp
 .DS_Store
 /build/
+__pycache__/
 # never commit signing material
 *.key
 *.csr

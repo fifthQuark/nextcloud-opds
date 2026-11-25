@@ -168,14 +168,17 @@ the library folder:
 
 How your library is protected: a copy of the database is changed, checked and only then written
 back, and nothing is written if the original changed in the meantime, if Calibre has it open
-(`metadata.db-journal`), or if its version is unknown (Calibre 4 to 9 are supported). Moved
+(`metadata.db-journal`), if there is a conflict copy of it, or if its version is unknown (Calibre 4
+to 9 are supported). Moved
 files are moved back when anything fails. At most once an hour a backup of `metadata.db` is
 made before an edit; the last ones can be downloaded from the settings page. `metadata.opf` is kept up to date, so
 *Library maintenance → Restore database* in Calibre can rebuild everything.
 
 **Do not edit in Calibre and here at the same time.** If Calibre works on a synchronised copy of
 the folder, close it and let the files synchronise before editing here, and the other way round;
-otherwise the sync client will report a conflict on `metadata.db`. Deleting books,
+otherwise the sync client will report a conflict on `metadata.db`. Where the conflict copy reaches
+the server, as with Syncthing, nothing can be edited until you have chosen a version in Calibre and
+deleted the copy; the Nextcloud client usually keeps it on the computer, so look there as well. Deleting books,
 editing custom columns and author notes remain tasks for Calibre. Custom columns are kept.
 
 ## Server-side tools
@@ -228,6 +231,18 @@ sorts people by last name.
   metadata with Calibre (or rename the file for formats without metadata) and the next scan
   picks it up because the file's ETag changes. Books in a Calibre library can also be edited
   in Nextcloud, see [Calibre libraries](#calibre-libraries-beta).
+
+## Tests
+
+`tests/` needs Python 3 and docker or podman, and starts throwaway Nextcloud servers:
+
+```bash
+NEXTCLOUD=34 python3 tests/test_calibre.py                  # with the Calibre from the PATH, or CALIBRE=/opt/calibre
+NEXTCLOUD=34 DATABASE=mysql python3 tests/test_upgrades.py  # from every release; sqlite, mysql or pgsql
+```
+
+GitHub runs both for every push to `main`, with Calibre 4 to 9 and Nextcloud 28 to 35, and before
+every release.
 
 ## License
 

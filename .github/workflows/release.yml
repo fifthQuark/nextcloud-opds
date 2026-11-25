@@ -5,6 +5,8 @@
 #   APP_CERTIFICATE   content of opds.crt (issued by Nextcloud, see PUBLISHING.md)
 #   APPSTORE_TOKEN    API token from https://apps.nextcloud.com/account/token
 #
+# Nothing is published unless the tests succeed (see test.yml).
+#
 # The tag must match the <version> in appinfo/info.xml (v1.2.3 <-> 1.2.3).
 name: Release
 
@@ -17,7 +19,11 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     env:
       APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}

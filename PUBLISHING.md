@@ -85,7 +85,8 @@ Bump `<version>` in `appinfo/info.xml` and `CHANGELOG.md`, commit, then tag and 
 git tag v1.0.0 && git push origin main v1.0.0
 ```
 
-The *Release* workflow lints the code, signs the files with `occ integrity:sign-app` inside
+The *Release* workflow first runs the tests (`tests/`, see `test.yml`) and publishes nothing if one
+fails. Then it lints the code, signs the files with `occ integrity:sign-app` inside
 a Nextcloud container, builds `opds-1.0.0.tar.gz`, attaches it to a GitHub release and
 registers the release with the App Store. A few minutes later the app shows up in the store
 and in the **Apps** page of every Nextcloud whose version is within the `min-version` /

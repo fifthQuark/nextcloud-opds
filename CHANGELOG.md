@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0 – unreleased
+
+* Calibre beta: a library with a conflict copy of `metadata.db` (Nextcloud, Syncthing and others name
+  them "…conflict…") can only be read until the copy is deleted. The book page and the settings say so.
+* Every release is now tested automatically before it is published: together with Calibre 4 to 9, and
+  updating from every earlier release on SQLite, MariaDB and PostgreSQL.
+
 ## 1.7.0 – 2026-11-25
 
 * Calibre beta: EPUBs (also kepub) that are downloaded or opened in a reader get the title, authors,

@@ -168,7 +168,32 @@ class CalibreLibrary {
         if (!$library->isCreatable() || !$library->isUpdateable() || !$this->dbFile($library)->isUpdateable()) {
             return 'You may not change this folder';
         }
-        return $db->readOnlyReason();
+        $conflicts = $this->conflictCopies($library);
+        return $conflicts !== [] ? $this->conflictText($conflicts) : $db->readOnlyReason();
+    }
+
+    /**
+     * Copies of the database that a sync program made because it was changed in two places, such as
+     * "metadata (conflicted copy 2026-11-25 101500).db" or "metadata.sync-conflict-20261125-101500-ABCDEFG.db".
+     *
+     * @return list<string> names
+     */
+    public function conflictCopies(Folder $library): array {
+        $names = [];
+        foreach ($library->search('conflict') as $node) {
+            $name = $node->getName();
+            if ($node instanceof File && preg_match('/^metadata[^a-z0-9].*conflict/i', $name) === 1 && preg_match('/\.db(?![a-z0-9])/i', $name) === 1
+                && !str_contains($this->inLibrary($library, $node), '/')) {
+                $names[] = $name;
+            }
+        }
+        sort($names);
+        return $names;
+    }
+
+    /** @param list<string> $names */
+    private function conflictText(array $names): string {
+        return 'The database was changed in two places at the same time: there is a conflict copy (' . $names[0] . '). Find out in Calibre which of the two you want to keep, then delete the copy';
     }
 
     /** @param array<string,mixed> $record */
@@ -383,6 +408,11 @@ class CalibreLibrary {
             throw new CalibreException('The library folder is the folder with all your files. Choose a folder with books only as library folder first, otherwise all kinds of documents would be moved');
         }
         if (!$folder->nodeExists(self::DB)) {
+            // It may be all that is left of a library
+            $conflicts = $this->conflictCopies($folder);
+            if ($conflicts !== []) {
+                throw new CalibreException($this->conflictText($conflicts));
+            }
             $this->createDb($uid, $folder);
         }
         return $folder;

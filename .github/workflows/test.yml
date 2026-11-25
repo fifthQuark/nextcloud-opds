@@ -1,0 +1,68 @@
+# Runs the app in real Nextcloud servers: together with several versions of Calibre, and
+# updating from every earlier release. The release workflow waits for it.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calibre:
+    name: Calibre ${{ matrix.calibre }}, Nextcloud ${{ matrix.nextcloud }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        nextcloud: ['35']
+        calibre: ['4.23.0', '5.44.0', '6.29.0', '7.26.0', '8.16.2', '9.13.0']
+        include:
+          - nextcloud: '28'
+            calibre: '9.13.0'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Calibre
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libegl1 libgl1 libopengl0 libglx0 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libfontconfig1 libxi6 libxrender1
+          mkdir "$RUNNER_TEMP/calibre"
+          curl -sSfL --retry 5 "https://download.calibre-ebook.com/${{ matrix.calibre }}/calibre-${{ matrix.calibre }}-x86_64.txz" | tar -xJ -C "$RUNNER_TEMP/calibre"
+          "$RUNNER_TEMP/calibre/calibredb" --version
+      - name: Test
+        env:
+          CALIBRE: ${{ runner.temp }}/calibre
+          NEXTCLOUD: ${{ matrix.nextcloud }}
+        run: python3 tests/test_calibre.py
+
+  upgrades:
+    name: Updates on Nextcloud ${{ matrix.nextcloud }} with ${{ matrix.database }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nextcloud: '28'
+            database: sqlite
+          - nextcloud: '33'
+            database: pgsql
+          - nextcloud: '34'
+            database: mysql
+          - nextcloud: '35'
+            database: sqlite
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Test
+        env:
+          NEXTCLOUD: ${{ matrix.nextcloud }}
+          DATABASE: ${{ matrix.database }}
+        run: python3 tests/test_upgrades.py
