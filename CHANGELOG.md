@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1 – 2026-11-25
+
+* Fixed the update from 1.1.1 or older, which failed with "Unknown column 'work'" when the catalog
+  had books whose authors were stored in a single field ("A & B"). Servers on which the update to
+  1.3.0 failed can update to this version directly.
+
 ## 1.3.0 – 2026-11-25
 
 * Book browser: an *OPDS+* entry in the app menu shows the library with covers, search, sorting and

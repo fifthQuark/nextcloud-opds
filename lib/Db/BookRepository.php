@@ -438,6 +438,9 @@ class BookRepository {
     /**
      * Separates combined author fields ("A & B", "A; B") of books indexed by versions
      * that stored them as one person. Returns the number of changed books.
+     *
+     * Runs in the migration of 1.2.0, before later migrations have added their columns:
+     * it must only use columns that exist since 1.0.0, and therefore not save().
      */
     public function splitStoredAuthors(): int {
         $changed = 0;
@@ -469,11 +472,33 @@ class BookRepository {
                 }
                 $book->authors = $meta->authors;
                 $book->authorSort = Sorting::authorSortKey($meta->authors, $meta->authorsSort);
-                $this->save($book);
+                $this->saveAuthors($book);
                 $changed++;
             }
         } while (count($rows) === 500);
         return $changed;
+    }
+
+    /** Stores the authors only, see splitStoredAuthors(). */
+    private function saveAuthors(Book $book): void {
+        $values = $this->toRow($book);
+        $this->db->beginTransaction();
+        try {
+            $qb = $this->db->getQueryBuilder();
+            $qb->update(self::TABLE);
+            foreach (['author', 'author_sort'] as $column) {
+                [$value, $type] = $values[$column];
+                $qb->set($column, $qb->createNamedParameter($value, $type));
+            }
+            $qb->where($qb->expr()->eq('id', $qb->createNamedParameter($book->id, IQueryBuilder::PARAM_INT)));
+            $qb->executeStatement();
+
+            $this->replaceTerms($book);
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
     }
 
     /** @param int[] $fileIds */
