@@ -63,6 +63,15 @@ class CalibreController extends Controller {
         return new JSONResponse(['enabled' => $enabled]);
     }
 
+    /** Whether downloaded EPUBs get the metadata from Calibre. */
+    #[NoAdminRequired]
+    public function downloads(bool $embed = true): JSONResponse {
+        return $this->guard(function (string $uid) use ($embed): JSONResponse {
+            $this->config->setEmbedsMetadata($uid, $embed);
+            return new JSONResponse(['embed' => $embed]);
+        });
+    }
+
     /**
      * @param array<string,mixed> $fields
      */

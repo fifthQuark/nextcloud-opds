@@ -57,6 +57,7 @@ class Personal implements ISettings {
             'appPasswordUrl' => $this->urlGenerator->linkToRouteAbsolute('settings.PersonalSettings.index', ['section' => 'security']),
             'libraryUrl' => $this->urlGenerator->linkToRoute('opds.library.index'),
             'calibre' => $this->config->isCalibreEnabled($uid) && Sqlite::available(),
+            'calibreEmbed' => $this->config->embedsMetadata($uid),
             'calibreAvailable' => Sqlite::available(),
             'bookCount' => $this->repository->countWorks($uid),
             'lastScan' => $this->config->getLastScan($uid),

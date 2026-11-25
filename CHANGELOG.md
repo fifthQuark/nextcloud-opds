@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0 – 2026-11-25
+
+* Calibre beta: EPUBs (also kepub) that are downloaded or opened in a reader get the title, authors,
+  series, tags, cover and so on from Calibre, as with Calibre's own server. The stored file is not
+  changed, and a book whose file says the same already is sent as it is. Can be turned off in the
+  settings, for example if an app recognises books by their file to synchronise the reading position.
+
 ## 1.6.0 – 2026-11-25
 
 * OPDS catalog: a book with several formats is now one entry with a download link for each format,

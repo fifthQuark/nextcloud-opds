@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\Opds\Controller;
 
 use OCA\Opds\AppInfo\Application;
+use OCA\Opds\Calibre\DownloadCopy;
 use OCA\Opds\Db\Book;
 use OCA\Opds\Db\BookFilter;
 use OCA\Opds\Db\BookRepository;
@@ -63,6 +64,7 @@ class OpdsController extends Controller {
         private Columns $columns,
         private LibraryScanner $scanner,
         private CoverService $covers,
+        private DownloadCopy $copies,
         private FeedBuilder $feeds,
         private NewsService $news,
         private LoggerInterface $logger,
@@ -495,17 +497,18 @@ class OpdsController extends Controller {
         if ($book === null || $file === null) {
             return $this->notFound();
         }
-        $handle = $file->fopen('r');
+        $copy = $this->copies->make($uid, $book, $file);
+        $handle = $copy !== null ? fopen($copy['path'], 'r') : $file->fopen('r');
         if ($handle === false) {
             return $this->notFound();
         }
         $response = new StreamResponse($handle);
         $response->addHeader('Content-Type', FeedBuilder::mimeForFormat($book->format, $file->getMimeType()));
-        $response->addHeader('Content-Length', (string)$file->getSize());
+        $response->addHeader('Content-Length', (string)($copy['size'] ?? $file->getSize()));
         $response->addHeader('Content-Disposition', $this->contentDisposition($file->getName()));
         $response->addHeader('X-Content-Type-Options', 'nosniff');
-        $response->setETag($file->getEtag());
-        $response->cacheFor(3600);
+        $response->setETag($copy['etag'] ?? $file->getEtag());
+        $response->cacheFor($this->copies->applies($uid, $book) ? 0 : 3600);
         return $response;
     }
 

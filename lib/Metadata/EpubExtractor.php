@@ -45,7 +45,7 @@ class EpubExtractor {
         return $doc !== null ? $this->parseOpf($doc) : null;
     }
 
-    private function findOpfPath(\ZipArchive $zip): ?string {
+    public function findOpfPath(\ZipArchive $zip): ?string {
         $container = $zip->getFromName('META-INF/container.xml');
         if ($container !== false) {
             $doc = Text::dom($container);
@@ -281,7 +281,8 @@ class EpubExtractor {
         return $value;
     }
 
-    private function resolve(string $opfPath, string $href): string {
+    /** Path inside the EPUB of something the package document refers to. */
+    public function resolve(string $opfPath, string $href): string {
         $href = rawurldecode(explode('#', $href, 2)[0]);
         $dir = dirname($opfPath);
         $path = ($dir === '.' || $dir === '' || $dir === '/') ? $href : $dir . '/' . $href;

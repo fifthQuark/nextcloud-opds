@@ -29,6 +29,7 @@ return [
         ['name' => 'settings#reset', 'url' => '/settings/reset', 'verb' => 'POST'],
         ['name' => 'settings#saveNews', 'url' => '/settings/news', 'verb' => 'POST'],
         ['name' => 'calibre#enable', 'url' => '/settings/calibre', 'verb' => 'POST'],
+        ['name' => 'calibre#downloads', 'url' => '/settings/calibre/downloads', 'verb' => 'POST'],
 
         // Book browser (session + CSRF protected)
         ['name' => 'library#index', 'url' => '/library', 'verb' => 'GET'],

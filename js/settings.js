@@ -190,6 +190,21 @@
             }
         });
 
+        const embedBox = $('opds-calibre-embed');
+        embedBox.addEventListener('change', async () => {
+            embedBox.disabled = true;
+            setStatus(status, 'Saving…');
+            try {
+                await post('/settings/calibre/downloads', { embed: embedBox.checked });
+                setStatus(status, 'Saved', 'ok');
+            } catch (e) {
+                embedBox.checked = !embedBox.checked;
+                setStatus(status, e.message, 'error');
+            } finally {
+                embedBox.disabled = false;
+            }
+        });
+
         const buttons = [$('opds-calibre-create'), $('opds-calibre-convert')];
         const setBusy = (busy) => buttons.forEach((b) => { b.disabled = busy; });
 

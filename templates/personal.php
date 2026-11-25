@@ -203,6 +203,14 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
             <label for="opds-calibre-enabled">Use and edit Calibre libraries</label>
         </p>
         <div id="opds-calibre-more" <?php if (!$_['calibre']) { echo 'hidden'; } ?>>
+            <p>
+                <input type="checkbox" class="checkbox" id="opds-calibre-embed" <?php if ($_['calibreEmbed']) { echo 'checked'; } ?>>
+                <label for="opds-calibre-embed">Put the metadata and cover from Calibre into EPUBs when they are downloaded</label>
+            </p>
+            <p class="settings-hint">
+                The file in the library stays as it is. Apps that recognise a book by its file, for example to synchronise the reading
+                position, see a new book after an edit.
+            </p>
             <div id="opds-calibre-list"></div>
             <h4>Make the current library folder a Calibre library</h4>
             <p class="settings-hint">

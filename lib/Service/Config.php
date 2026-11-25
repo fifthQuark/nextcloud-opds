@@ -228,6 +228,15 @@ class Config {
         $this->config->setUserValue($uid, Application::APP_ID, 'calibre_beta', $enabled ? '1' : '0');
     }
 
+    /** Beta: put the metadata from Calibre into EPUBs when they are downloaded. */
+    public function embedsMetadata(string $uid): bool {
+        return $this->config->getUserValue($uid, Application::APP_ID, 'calibre_embed', '1') === '1';
+    }
+
+    public function setEmbedsMetadata(string $uid, bool $embed): void {
+        $this->config->setUserValue($uid, Application::APP_ID, 'calibre_embed', $embed ? '1' : '0');
+    }
+
     public function setRoot(string $uid, string $root): void {
         $this->config->setUserValue($uid, Application::APP_ID, 'root', $root);
     }

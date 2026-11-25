@@ -142,13 +142,20 @@ the library folder:
   get a list of their own in the browser and the OPDS catalog; columns built from a template are not
   available. Tags and text columns that Calibre shows as a hierarchy (`Fiction.Fantasy`, see
   *Preferences → Look & feel → Tag browser*) are nested here as well.
+* **Downloads:** an EPUB or kepub that is downloaded or opened in a reader is a copy with the
+  title, authors, series, tags, publisher, date, languages, rating, description, identifiers and
+  cover from Calibre. Only what differs is written, the stored file is never changed, and the same
+  record always gives the same file. Sent as they are: other formats, files over 200 MB, signed or
+  copy-protected books, and files whose package document cannot be changed safely. Custom columns
+  are not written. Turn it off with *Put the metadata and cover from Calibre into EPUBs*; an app that
+  recognises a book by its file sees a new book after an edit.
 * **Files:** the formats of a book are those listed in Calibre. Other files in its folder, such as
   those in `data`, are not books of their own and left out.
 * **Editing:** a book gets an *Edit* button for title, authors, series, tags, publisher, date,
   languages, rating, description, identifiers, sort names and the cover (upload, take from the
   book file, or remove). A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
   the folder and files to `Author/Title (id)/Title - Author.ext` when the title or first author
-  changes. The contents of the book files are never changed.
+  changes. The stored book files are never changed inside.
 * **Current folder:** *Convert the current folder* turns the library folder itself into a Calibre
   library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
   inside it. Nothing is copied, reader links keep working, and folders that become empty are
@@ -184,7 +191,7 @@ occ user:setting alice opds root /Library   # set the folder without the web UI
 Settings keys (per user, app id `opds`): `root`, `extensions`, `filename_pattern`
 (`author-title`, `title-author`, `title`), `default_sort`, `default_order`, `page_size`,
 `group_threshold`, `scan_interval` (minutes, `0` disables request-triggered scans), `show_hidden`
-(`0` or `1`; takes effect with the next scan).
+(`0` or `1`; takes effect with the next scan), `calibre_embed` (`1` by default, `0` sends EPUBs unchanged).
 
 ## How metadata is mapped
 
