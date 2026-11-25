@@ -31,7 +31,7 @@ use Psr\Log\LoggerInterface;
 class CalibreLibrary {
     public const DB = 'metadata.db';
     private const COVER = 'cover.jpg';
-    private const OPF = 'metadata.opf';
+    public const OPF = 'metadata.opf';
     private const MAX_DB_SIZE = 512 * 1024 * 1024;
     /** A new backup is made when the newest one is older than this (seconds) */
     private const BACKUP_INTERVAL = 3600;
@@ -216,30 +216,42 @@ class CalibreLibrary {
     }
 
     /**
-     * Adds books to the library, copying their files. Stops when the time is used up.
+     * Adds books to the library, copying or moving their files. Stops when the time is used up.
      *
-     * @param iterable<string,callable(): (array{fields: array<string,mixed>, files: list<File>, cover: ?string}|null)> $books
+     * @param iterable<int,callable> $books number => loads a book; gets a filter for its files
+     * @param bool $move move files that are inside the library folder already
      * @return array{last: string, added: int, skipped: int, failed: list<string>, done: bool}
      */
-    public function import(string $uid, Folder $library, iterable $books, int $seconds): array {
-        return $this->change($uid, $library, function (CalibreDb $db) use ($library, $books, $seconds): array {
+    public function import(string $uid, Folder $library, iterable $books, int $seconds, bool $move = false): array {
+        $left = [];
+        $result = $this->change($uid, $library, function (CalibreDb $db, array &$undo) use ($uid, $library, $books, $seconds, $move, &$left): array {
             $start = microtime(true);
             $out = ['last' => '', 'added' => 0, 'skipped' => 0, 'failed' => [], 'done' => true];
-            $db->transaction(function () use ($db, $library, $books, $seconds, $start, &$out): void {
+            $wanted = $move ? $this->movable($uid, $library, $db, $out['skipped']) : null;
+            $db->transaction(function () use ($db, $library, $books, $seconds, $move, $wanted, $start, &$out, &$undo, &$left): void {
                 foreach ($books as $key => $load) {
                     if (microtime(true) - $start > $seconds && $out['last'] !== '') {
                         $out['done'] = false;
                         return;
                     }
-                    $book = $load();
-                    if ($book === null || $db->findSame($book['fields']['title'], $book['fields']['authors'][0] ?? 'Unknown') > 0) {
+                    $steps = [];
+                    $book = $load($wanted);
+                    if ($move && $book === null) {
+                        // Already part of the library, or counted by the filter
+                    } elseif ($book === null || (!$move && $db->findSame($book['fields']['title'], $book['fields']['authors'][0] ?? 'Unknown') > 0)) {
                         $out['skipped']++;
                     } else {
                         try {
-                            $db->savepoint(fn () => $this->addBook($db, $library, $book));
+                            $from = array_map(fn (File $f): string => dirname($this->inLibrary($library, $f)), $move ? $book['files'] : []);
+                            $db->savepoint(function () use ($db, $library, $book, $move, &$steps): void {
+                                $this->addBook($db, $library, $book, $move, $steps);
+                            });
                             $out['added']++;
+                            array_push($undo, ...($move ? $steps : []));
+                            array_push($left, ...$from);
                         } catch (\Throwable $e) {
                             // One unreadable file must not block the rest
+                            $this->rollback($library, $move ? $steps : []);
                             $this->logger->warning('OPDS: could not copy ' . $book['fields']['title'] . ' to the Calibre library: ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
                             $out['failed'][] = (string)$book['fields']['title'];
                         }
@@ -249,18 +261,81 @@ class CalibreLibrary {
             });
             return $out;
         });
+        // Only now that nothing has to be moved back any more
+        foreach (array_unique($left) as $path) {
+            for (; $path !== '.' && $path !== ''; $path = dirname($path)) {
+                try {
+                    $this->removeIfEmpty($library, $path);
+                } catch (\Throwable $e) {
+                    break;
+                }
+            }
+        }
+        return $result;
     }
 
-    /** Creates an empty library in a new or empty folder. */
-    public function create(string $uid, string $path): Folder {
+    /** @return \Closure(File): bool whether a file can be moved to the folder of a new book */
+    private function movable(string $uid, Folder $library, CalibreDb $db, int &$skipped): \Closure {
+        $known = $db->filePaths();
+        $folders = $db->bookFolders();
+        $others = [];
+        foreach ($this->findAll($uid) as $other) {
+            if ($other->getId() !== $library->getId()) {
+                $others[] = rtrim($other->getPath(), '/') . '/';
+            }
+        }
+        $mount = $library->getMountPoint()->getMountPoint();
+        return function (File $file) use ($library, $known, $folders, $others, $mount, &$skipped): bool {
+            $path = $this->inLibrary($library, $file);
+            if ($path === '' || isset($known[CalibreDb::pathKey($path)])) {
+                return false;
+            }
+            foreach ($others as $other) {
+                if (str_starts_with($file->getPath(), $other)) {
+                    return false;
+                }
+            }
+            // Extra files of a book that Calibre does not list as a format
+            for ($folder = dirname($path); $folder !== '.'; $folder = dirname($folder)) {
+                if (isset($folders[CalibreDb::pathKey($folder)])) {
+                    $skipped++;
+                    return false;
+                }
+            }
+            // Moving a file out of a share or an external storage would take it away from others
+            if ($file->getMountPoint()->getMountPoint() !== $mount || !$file->isDeletable() || !$file->isUpdateable()) {
+                $skipped++;
+                return false;
+            }
+            return true;
+        };
+    }
+
+    /** Whether a library is the catalog folder itself, so that books are moved instead of copied. */
+    public function isCatalog(string $uid, Folder $library): bool {
+        return $this->catalogFolder($uid)?->getId() === $library->getId();
+    }
+
+    /**
+     * Creates an empty library in a new or empty folder, or in the catalog folder.
+     *
+     * @param bool $inPlace the user agreed to have the books of the catalog folder moved
+     */
+    public function create(string $uid, string $path, bool $inPlace = false): Folder {
+        if ($inPlace) {
+            return $this->createInCatalog($uid);
+        }
         $userFolder = $this->rootFolder->getUserFolder($uid);
         $path = '/' . trim(str_replace('\\', '/', $path), '/');
         if ($path === '/' || str_contains($path . '/', '/../') || str_contains($path . '/', '/./')) {
             throw new CalibreException('Choose a folder for the new library');
         }
         $root = rtrim($this->config->getRoot($uid), '/') . '/';
+        if ($path . '/' === $root) {
+            throw new CalibreException('This is the current library folder. Use the button for the current folder to have its books moved instead of copied');
+        }
         if (str_starts_with($path . '/', $root)) {
-            throw new CalibreException('Choose a folder outside of the current library folder, otherwise every book would be listed twice');
+            throw new CalibreException('Choose the current library folder itself or a folder outside of it, otherwise every book would be listed twice');
         }
         try {
             $folder = $userFolder->get($path);
@@ -282,6 +357,26 @@ class CalibreLibrary {
         if ($folder->getDirectoryListing() !== []) {
             throw new CalibreException($path . ' is not empty. Choose a new or empty folder');
         }
+        $this->createDb($uid, $folder);
+        return $folder;
+    }
+
+    /** A library that is there already is kept: books it does not know yet are added to it. */
+    private function createInCatalog(string $uid): Folder {
+        $folder = $this->catalogFolder($uid);
+        if ($folder === null) {
+            throw new CalibreException('The library folder does not exist');
+        }
+        if ($this->config->getRoot($uid) === '/') {
+            throw new CalibreException('The library folder is the folder with all your files. Choose a folder with books only as library folder first, otherwise all kinds of documents would be moved');
+        }
+        if (!$folder->nodeExists(self::DB)) {
+            $this->createDb($uid, $folder);
+        }
+        return $folder;
+    }
+
+    private function createDb(string $uid, Folder $folder): void {
         $temp = $this->temp();
         try {
             CalibreDb::create($temp, $this->config->getTimezone($uid))->close();
@@ -289,7 +384,6 @@ class CalibreLibrary {
         } finally {
             $this->cleanup($temp);
         }
-        return $folder;
     }
 
     // ---------------------------------------------------------------- backups
@@ -416,13 +510,7 @@ class CalibreLibrary {
                 }
                 $this->upload($dbFile, $temp);
             } catch (\Throwable $e) {
-                foreach (array_reverse($undo) as $step) {
-                    try {
-                        $step();
-                    } catch (\Throwable $f) {
-                        $this->logger->error('OPDS: could not undo a change in ' . $library->getPath() . ': ' . $f->getMessage(), ['app' => Application::APP_ID, 'exception' => $f]);
-                    }
-                }
+                $this->rollback($library, $undo);
                 throw $e;
             } finally {
                 $this->cleanup($original);
@@ -436,6 +524,17 @@ class CalibreLibrary {
                 $this->cleanup($temp);
             }
             $this->locks->releaseLock($lock, ILockingProvider::LOCK_EXCLUSIVE);
+        }
+    }
+
+    /** @param list<callable> $undo */
+    private function rollback(Folder $library, array $undo): void {
+        foreach (array_reverse($undo) as $step) {
+            try {
+                $step();
+            } catch (\Throwable $e) {
+                $this->logger->error('OPDS: could not undo a change in ' . $library->getPath() . ': ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
+            }
         }
     }
 
@@ -525,15 +624,25 @@ class CalibreLibrary {
         return $path;
     }
 
-    /** @param array{fields: array<string,mixed>, files: list<File>, cover: ?string} $book */
-    private function addBook(CalibreDb $db, Folder $library, array $book): void {
+    /**
+     * @param array{fields: array<string,mixed>, files: list<File>, cover: ?string, added: int} $book
+     * @param list<callable> $undo
+     */
+    private function addBook(CalibreDb $db, Folder $library, array $book, bool $move, array &$undo): void {
         $fields = $book['fields'];
-        $id = $db->add($fields);
+        $id = $db->add($fields, $move ? $book['added'] : null);
         $author = $fields['authors'][0] ?? 'Unknown';
         $path = $this->adoptAuthorFolder($library, Naming::bookPath($id, $fields['title'], $author));
         $folder = $library;
+        $at = '';
         foreach (explode('/', $path) as $part) {
-            $folder = $folder->nodeExists($part) ? $folder->get($part) : $folder->newFolder($part);
+            $at = ltrim($at . '/' . $part, '/');
+            if ($folder->nodeExists($part)) {
+                $folder = $folder->get($part);
+            } else {
+                $folder = $folder->newFolder($part);
+                $undo[] = fn () => $this->removeIfEmpty($library, $at);
+            }
             if (!$folder instanceof Folder) {
                 throw new CalibreException('"' . $path . '" cannot be used as a folder');
             }
@@ -548,24 +657,49 @@ class CalibreLibrary {
         $name = Naming::fileName($fields['title'], $author, $longest);
         foreach ($formats as $format => $file) {
             $target = $name . '.' . strtolower($format);
-            if ($folder->nodeExists($target)) {
-                // Left over from an interrupted import of the same book
-                $folder->get($target)->delete();
+            if ($move) {
+                $this->moveInto($folder, $target, $file, $undo);
+            } else {
+                if ($folder->nodeExists($target)) {
+                    // Left over from an interrupted import of the same book
+                    $folder->get($target)->delete();
+                }
+                $file->copy($folder->getPath() . '/' . $target);
             }
-            $file->copy($folder->getPath() . '/' . $target);
             $db->addFormat($id, $format, $name, (int)$file->getSize());
         }
         $db->setFiles($id, $path, []);
         if ($book['cover'] !== null) {
             try {
-                $undo = [];
                 $this->writeFile($folder, self::COVER, $this->image->toJpeg($book['cover']), $undo);
                 $db->setHasCover($id, true);
             } catch (CalibreException $e) {
                 // a damaged cover is no reason to leave out the book
             }
         }
+        if (!$folder->nodeExists(self::OPF)) {
+            $undo[] = static function () use ($folder): void {
+                if ($folder->nodeExists(self::OPF)) {
+                    $folder->get(self::OPF)->delete();
+                }
+            };
+        }
         $this->writeOpf($library, $this->record($db, $id));
+    }
+
+    /** @param list<callable> $undo */
+    private function moveInto(Folder $folder, string $target, File $file, array &$undo): void {
+        $from = $file->getPath();
+        $to = $folder->getPath() . '/' . $target;
+        if ($from === $to) {
+            // Moved by an earlier attempt that was cut off before the database was saved
+            return;
+        }
+        if ($folder->nodeExists($target)) {
+            throw new CalibreException('There already is a file "' . $target . '" in the folder of this book');
+        }
+        $file->move($to);
+        $undo[] = fn () => $this->rootFolder->get($to)->move($from);
     }
 
     /** @return array<string,mixed> */

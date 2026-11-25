@@ -197,7 +197,16 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
         </p>
         <div id="opds-calibre-more" <?php if (!$_['calibre']) { echo 'hidden'; } ?>>
             <div id="opds-calibre-list"></div>
-            <h4>New Calibre library from this catalog</h4>
+            <h4>Make the current library folder a Calibre library</h4>
+            <p class="settings-hint">
+                Adds a Calibre database to the library folder and moves the book files into <em>Author/Title</em> folders inside it.
+                Nothing is copied, so every book is listed once and no extra space is needed. Folders that become empty are
+                removed. If the folder is a Calibre library already, only books that Calibre does not know yet are added.
+            </p>
+            <div class="opds-row">
+                <button type="button" id="opds-calibre-convert">Convert the current folder</button>
+            </div>
+            <h4>Copy the books into a new Calibre library</h4>
             <p class="settings-hint">
                 Copies all books of the current library folder into a new folder with a Calibre database, sorted into
                 <em>Author/Title</em> folders. The originals are not changed, so this needs the same space once more.

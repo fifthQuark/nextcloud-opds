@@ -138,6 +138,13 @@ the library folder:
   book file, or remove). A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
   the folder and files to `Author/Title (id)/Title - Author.ext` when the title or first author
   changes. The contents of the book files are never changed.
+* **Current folder:** *Convert the current folder* turns the library folder itself into a Calibre
+  library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
+  inside it. Nothing is copied, reader links keep working, and folders that become empty are
+  removed. If the folder is a Calibre library already, books that Calibre does not know are added.
+  Left where they are: files in folders shared with you or on external storage, files you may not
+  move, books in other Calibre libraries below the folder, extra files in the folder of a book, and
+  second files of the same format. It can be interrupted and continued.
 * **New library:** *Create and copy books* makes a Calibre library in a new or empty folder
   and copies all books of the current library folder into it. The originals stay as they are.
 
@@ -150,7 +157,7 @@ made before an edit; the last ones can be downloaded from the settings page. `me
 
 **Do not edit in Calibre and here at the same time.** If Calibre works on a synchronised copy of
 the folder, close it and let the files synchronise before editing here, and the other way round;
-otherwise the sync client will report a conflict on `metadata.db`. Adding and deleting books,
+otherwise the sync client will report a conflict on `metadata.db`. Deleting books,
 custom columns and author notes remain tasks for Calibre. Custom columns are kept.
 
 ## Server-side tools

@@ -151,14 +151,17 @@ class BookRepository {
         return $works;
     }
 
-    /** @return list<string> keys of all works in the order they were first indexed */
+    /** @return array<string,int> keys of all works => a number that increases in the order they were first indexed and survives renaming */
     public function listWorkKeys(string $uid): array {
         $qb = $this->db->getQueryBuilder();
         $qb->select('work')->selectAlias($qb->func()->min('id'), 'first_id')->from(self::TABLE)
             ->where($qb->expr()->eq('user_id', $qb->createNamedParameter($uid)))
             ->groupBy('work')->orderBy('first_id', 'ASC');
         $result = $qb->executeQuery();
-        $keys = array_map('strval', array_column($result->fetchAll(), 'work'));
+        $keys = [];
+        foreach ($result->fetchAll() as $row) {
+            $keys[(string)$row['work']] = (int)$row['first_id'];
+        }
         $result->closeCursor();
         return $keys;
     }

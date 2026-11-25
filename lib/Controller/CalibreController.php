@@ -143,7 +143,7 @@ class CalibreController extends Controller {
                 }
                 $out[] = $row;
             }
-            return new JSONResponse(['libraries' => $out]);
+            return new JSONResponse(['root' => $this->config->getRoot($uid), 'libraries' => $out]);
         });
     }
 
@@ -160,19 +160,23 @@ class CalibreController extends Controller {
         });
     }
 
-    /** Creates an empty library and later, batch by batch, copies the books into it. */
+    /** Creates an empty library and later, batch by batch, copies or moves the books into it. */
     #[NoAdminRequired]
-    public function create(string $path = ''): JSONResponse {
-        return $this->guard(function (string $uid) use ($path): JSONResponse {
-            $folder = $this->calibre->create($uid, $path);
+    public function create(string $path = '', bool $inPlace = false): JSONResponse {
+        return $this->guard(function (string $uid) use ($path, $inPlace): JSONResponse {
+            $folder = $this->calibre->create($uid, $path, $inPlace);
             return new JSONResponse(['path' => $this->calibre->relative($uid, $folder), 'total' => $this->repository->countWorks($uid)]);
         });
     }
 
     #[NoAdminRequired]
-    public function import(string $path = '', string $after = ''): JSONResponse {
-        return $this->guard(function (string $uid) use ($path, $after): JSONResponse {
-            return new JSONResponse($this->importer->batch($uid, $this->folder($uid, $path), $after, 15));
+    public function import(string $path = '', string $after = '', bool $inPlace = false): JSONResponse {
+        return $this->guard(function (string $uid) use ($path, $after, $inPlace): JSONResponse {
+            $library = $this->folder($uid, $path);
+            if ($inPlace !== $this->calibre->isCatalog($uid, $library)) {
+                throw new CalibreException('The library folder was changed in the settings in the meantime. Reload this page');
+            }
+            return new JSONResponse($this->importer->batch($uid, $library, $after, 15, $inPlace));
         });
     }
 

@@ -39,6 +39,12 @@ class EpubExtractor {
         }
     }
 
+    /** Reads a package document outside of an EPUB file, such as the metadata.opf of Calibre. */
+    public function parse(string $xml): ?Metadata {
+        $doc = Text::dom($xml);
+        return $doc !== null ? $this->parseOpf($doc) : null;
+    }
+
     private function findOpfPath(\ZipArchive $zip): ?string {
         $container = $zip->getFromName('META-INF/container.xml');
         if ($container !== false) {

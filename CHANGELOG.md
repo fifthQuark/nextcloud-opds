@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0 – 2026-11-25
+
+* Calibre beta: the current library folder itself can be made a Calibre library with *Convert the
+  current folder*. Book files are moved instead of copied, so that every book is listed once. In a
+  folder that is a Calibre library already, books unknown to Calibre are added.
+
 ## 1.3.1 – 2026-11-25
 
 * Fixed the update from 1.1.1 or older, which failed with "Unknown column 'work'" when the catalog

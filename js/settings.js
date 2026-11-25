@@ -120,6 +120,7 @@
         const listNode = $('opds-calibre-list');
         const useButton = $('opds-calibre-use');
         let created = '';
+        let catalog = '';
 
         const node = (tag, text) => {
             const n = document.createElement(tag);
@@ -140,6 +141,7 @@
                 setStatus(status, e.message, 'error');
                 return;
             }
+            catalog = data.root;
             if (data.libraries.length === 0) {
                 listNode.append(node('p', 'There is no Calibre library in the library folder.'));
                 return;
@@ -187,36 +189,81 @@
             }
         });
 
-        $('opds-calibre-create').addEventListener('click', async (event) => {
-            const button = event.currentTarget;
-            button.disabled = true;
+        const buttons = [$('opds-calibre-create'), $('opds-calibre-convert')];
+        const setBusy = (busy) => buttons.forEach((b) => { b.disabled = busy; });
+
+        const addBooks = async (path, inPlace) => {
+            const sum = { added: 0, skipped: 0, failed: [] };
+            let after = '';
+            let result;
+            do {
+                result = await post('/api/calibre/import', { path: path, after: after, inPlace: inPlace });
+                after = result.last || after;
+                sum.added += result.added;
+                sum.skipped += result.skipped;
+                sum.failed.push(...result.failed);
+                setStatus(status, (inPlace ? 'Moving books: ' : 'Copying books: ') + result.processed + ' of ' + result.total);
+            } while (!result.done);
+            return sum;
+        };
+
+        const showSum = (sum, done, skipped) => {
+            setStatus(status, sum.added + (sum.added === 1 ? ' book ' : ' books ') + done
+                + (sum.skipped ? ', ' + sum.skipped + ' ' + skipped : '')
+                + (sum.failed.length ? ', ' + sum.failed.length + ' failed: ' + sum.failed.slice(0, 10).join(', ') : ''), sum.failed.length ? 'error' : 'ok');
+        };
+
+        const convert = async () => {
+            if (catalog === '') {
+                await drawLibraries();
+            }
+            if (catalog === '' || !window.confirm('Move the books in ' + catalog + ' into Author/Title folders of a Calibre library?\n\n'
+                + 'Files are renamed and moved inside this folder, also on computers that synchronise it. This cannot be undone with one click, so make a backup first. '
+                + 'Close Calibre and let your files synchronise before you continue.')) {
+                return;
+            }
+            setBusy(true);
+            let started = false;
+            try {
+                setStatus(status, 'Looking for new books…');
+                await runScan(false);
+                const path = (await post('/api/calibre', { inPlace: true })).path;
+                started = true;
+                const sum = await addBooks(path, true);
+                setStatus(status, 'Updating the catalog…');
+                await runScan(false);
+                await drawLibraries();
+                if (sum.added + sum.skipped + sum.failed.length === 0) {
+                    setStatus(status, 'Nothing to move: all books are in the Calibre library ' + path + ' already', 'ok');
+                    return;
+                }
+                showSum(sum, 'moved into the Calibre library ' + path, 'files left where they are (extra files of a book, or files you may not move or that are shared with you)');
+            } catch (e) {
+                setStatus(status, e.message + (started ? ' Press the button again to continue.' : ''), 'error');
+            } finally {
+                setBusy(false);
+            }
+        };
+        $('opds-calibre-convert').addEventListener('click', convert);
+
+        $('opds-calibre-create').addEventListener('click', async () => {
+            const wanted = '/' + $('opds-calibre-path').value.trim().replace(/^\/+|\/+$/g, '');
+            if (created === '' && catalog !== '' && wanted !== '/' && wanted === catalog) {
+                return convert();
+            }
+            setBusy(true);
             setStatus(status, 'Creating the library…');
             try {
                 if (created === '') {
                     created = (await post('/api/calibre', { path: $('opds-calibre-path').value })).path;
                     $('opds-calibre-path').disabled = true;
                 }
-                let after = '';
-                let added = 0;
-                let skipped = 0;
-                const failed = [];
-                let result;
-                do {
-                    result = await post('/api/calibre/import', { path: created, after: after });
-                    after = result.last || after;
-                    added += result.added;
-                    skipped += result.skipped;
-                    failed.push(...result.failed);
-                    setStatus(status, 'Copying books: ' + result.processed + ' of ' + result.total);
-                } while (!result.done);
-                setStatus(status, added + ' books copied to ' + created
-                    + (skipped ? ', ' + skipped + ' skipped (already there or file missing)' : '')
-                    + (failed.length ? ', ' + failed.length + ' failed: ' + failed.slice(0, 10).join(', ') : ''), failed.length ? 'error' : 'ok');
+                showSum(await addBooks(created, false), 'copied to ' + created, 'skipped (already there or file missing)');
                 useButton.hidden = false;
             } catch (e) {
                 setStatus(status, e.message + (created ? ' Press the button again to continue.' : ''), 'error');
             } finally {
-                button.disabled = false;
+                setBusy(false);
             }
         });
 

@@ -107,6 +107,15 @@ class CalibreDb {
 
     // ---------------------------------------------------------------- reading
 
+    /** @return array<string,true> keys of the paths of all book folders */
+    public function bookFolders(): array {
+        $map = [];
+        foreach ($this->db->query("SELECT path FROM books WHERE path != ''") as $row) {
+            $map[self::pathKey((string)$row['path'])] = true;
+        }
+        return $map;
+    }
+
     /** @return array<string,int> relative path of every book file, lower-cased => book id */
     public function filePaths(): array {
         $map = [];
@@ -271,12 +280,12 @@ class CalibreDb {
     }
 
     /** @param array<string,mixed> $fields see FIELDS */
-    public function add(array $fields): int {
+    public function add(array $fields, ?int $added = null): int {
         if (($fields['series'] ?? '') === '') {
             unset($fields['series'], $fields['series_index']);
         }
         $this->db->run('INSERT INTO books (title, series_index, author_sort, pubdate, timestamp) VALUES (?, ?, ?, ?, ?)',
-            [$fields['title'], (float)($fields['series_index'] ?? 1.0), '', $this->dateToDb(''), self::now()]);
+            [$fields['title'], (float)($fields['series_index'] ?? 1.0), '', $this->dateToDb(''), self::now($added)]);
         $id = $this->db->lastId();
         $fields['sort'] ??= '';
         $this->update($id, $fields);
@@ -406,8 +415,10 @@ class CalibreDb {
         return 'c' . substr(sha1($row['id'] . '|' . $row['last_modified'] . '|' . $row['path']), 0, 24);
     }
 
-    private static function now(): string {
-        return (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.uP');
+    private static function now(?int $time = null): string {
+        $utc = new \DateTimeZone('UTC');
+        $date = $time !== null && $time > 0 ? (new \DateTimeImmutable('@' . $time))->setTimezone($utc) : new \DateTimeImmutable('now', $utc);
+        return $date->format('Y-m-d H:i:s.uP');
     }
 
     /** Day in the user's time zone; Calibre marks "no date" with the year 101. */
