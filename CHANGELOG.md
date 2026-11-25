@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 – unreleased
+## 1.3.0 – 2026-11-25
 
 * Book browser: an *OPDS+* entry in the app menu shows the library with covers, search, sorting and
   lists of authors (with their series), series, genres, publishers, languages, years and formats.
