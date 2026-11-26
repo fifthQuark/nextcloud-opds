@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.9.0 – unreleased
+## 1.9.0 – 2026-11-26
 
 * Calibre beta: custom columns can be edited together with the other fields of a book: text, lists,
   names, fixed values, series with their number, long text, dates, numbers, yes/no and ratings.
