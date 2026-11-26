@@ -134,8 +134,81 @@ class CalibreController extends Controller {
                 'series' => $db->names('series'),
                 'tags' => $db->names('tags'),
                 'publishers' => $db->names('publishers'),
+                'columns' => $db->customNames(),
             ]));
         });
+    }
+
+    /**
+     * Renames an author, series, genre, publisher or value of a custom column in all Calibre libraries.
+     *
+     * @param string $kind as in the lists of the book browser: author, series, subject, publisher, column-<key>
+     */
+    #[NoAdminRequired]
+    public function rename(string $kind = '', string $from = '', string $to = ''): JSONResponse {
+        return $this->guard(function (string $uid) use ($kind, $from, $to): JSONResponse {
+            $from = trim($from);
+            $final = null;
+            $books = 0;
+            $libraries = 0;
+            $name = null;
+            $skipped = [];
+            foreach ($this->calibre->findAll($uid) as $library) {
+                $path = $this->calibre->relative($uid, $library);
+                try {
+                    [$category, $column, $reason] = $this->calibre->read($uid, $library, function (CalibreDb $db) use ($library, $kind, $from): array {
+                        $category = $this->category($db, $kind);
+                        return $category !== null && $db->has($category, $from)
+                            ? [$category, str_starts_with($category, '#') ? $db->column(substr($category, 1)) : null, $this->calibre->readOnlyReason($library, $db)]
+                            : [null, null, ''];
+                    });
+                } catch (CalibreException $e) {
+                    $skipped[] = ['library' => $path, 'reason' => $e->getMessage()];
+                    continue;
+                }
+                if ($category === null) {
+                    continue;
+                }
+                // A name that cannot be used stops everything
+                $name = $this->fields->newName($category, $to, $column);
+                try {
+                    if ($reason !== '') {
+                        throw new CalibreException($reason);
+                    }
+                    $result = $this->calibre->rename($uid, $library, $category, $from, $name);
+                } catch (CalibreException $e) {
+                    $skipped[] = ['library' => $path, 'reason' => $e->getMessage()];
+                    continue;
+                }
+                $final = $result['name'];
+                $libraries++;
+                $books += count($result['books']);
+                try {
+                    $this->scanner->refreshCalibreBooks($uid, $library, $result['books']);
+                } catch (\Throwable $e) {
+                    $this->config->setLastScan($uid, 0);
+                    $this->logger->warning('OPDS: could not refresh the index: ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
+                }
+            }
+            if ($libraries === 0) {
+                throw new CalibreException($name !== null && $skipped !== [] ? end($skipped)['reason']
+                    : 'No book in a Calibre library has this name. Only books in Calibre libraries can be renamed here');
+            }
+            return new JSONResponse(['name' => $final ?? $name, 'books' => $books, 'libraries' => $libraries, 'skipped' => $skipped]);
+        });
+    }
+
+    /** The kind of name in Calibre for a list of the book browser. */
+    private function category(CalibreDb $db, string $kind): ?string {
+        if (str_starts_with($kind, 'column-')) {
+            foreach ($db->columns() as $column) {
+                if (\OCA\Opds\Db\Book::columnKey($column['label']) === substr($kind, 7) && in_array($column['type'], ['text', 'series'], true)) {
+                    return '#' . $column['label'];
+                }
+            }
+            return null;
+        }
+        return ['author' => 'authors', 'series' => 'series', 'subject' => 'tags', 'publisher' => 'publishers'][$kind] ?? null;
     }
 
     /** Overview for the settings page. */

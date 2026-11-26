@@ -23,6 +23,7 @@
     let shownList = null; // hash of the list behind the dialog
     let languageNames = {};
     const valueLabels = {};
+    let notice = ''; // shown once by the next view
 
     // -------------------------------------------------------------- helpers
 
@@ -170,7 +171,8 @@
         content.replaceChildren();
         $('ol-more').hidden = true;
         $('ol-count').textContent = '';
-        message('');
+        message(notice);
+        notice = '';
         $('ol-scroll').scrollTop = 0;
         for (const a of root.querySelectorAll('.ol-nav a[data-view]')) {
             const own = view === 'books' ? activeView(params) : view;
@@ -356,11 +358,84 @@
                 return;
             }
         }
+        const rename = renameControl(params);
+        if (rename) {
+            content.prepend(rename);
+        }
         const grid = el('ul', { class: 'ol-grid' });
         content.append(grid);
         list = { params: { ...filters, sort: params.sort, order: params.order }, page: 0, pages: 1, grid, busy: false };
         list.more = () => loadPage(mine);
         await loadPage(mine);
+    }
+
+    const RENAMED = { author: 'author', series: 'series', subject: 'genre', publisher: 'publisher' };
+
+    /** Renaming the author, series, genre, publisher or value of a column that the list shows, in all Calibre libraries */
+    function renameControl(params) {
+        if (!state.calibre || params.q) {
+            return null;
+        }
+        const keys = Object.keys(RENAMED).filter((k) => params[k]);
+        let kind;
+        let key;
+        let what;
+        if (params.column && params.value && keys.length === 0) {
+            const column = (state.columns || []).find((c) => c.key === params.column);
+            if (!column || !['text', 'series'].includes(column.type)) {
+                return null;
+            }
+            [kind, key, what] = [COLUMN + params.column, 'value', column.name];
+        } else if (keys.length === 1 && !params.column) {
+            [kind, key, what] = [keys[0], keys[0], RENAMED[keys[0]]];
+        } else if (keys.length === 2 && params.author && params.series) {
+            [kind, key, what] = ['series', 'series', 'series'];
+        } else {
+            return null;
+        }
+        const from = params[key];
+        const box = el('div', { class: 'ol-rename' });
+        const open = () => {
+            const input = el('input', { type: 'text', value: from, required: true, id: 'ol-rename-to', autocomplete: 'off' });
+            const status = el('p', { class: 'ol-status', role: 'status' });
+            const save = el('button', { type: 'submit', class: 'primary' }, 'Rename');
+            const cancel = el('button', { type: 'button', onclick: () => box.replaceChildren(start) }, 'Cancel');
+            box.replaceChildren(el('form', { onsubmit: async (e) => {
+                e.preventDefault();
+                const to = input.value.trim();
+                if (!to || to === from) {
+                    box.replaceChildren(start);
+                    return;
+                }
+                save.disabled = cancel.disabled = true;
+                status.className = 'ol-status';
+                status.textContent = 'Renaming…';
+                try {
+                    const data = await api('POST', '/api/rename', { kind, from, to });
+                    const parts = ['Renamed in ' + plural(data.books, 'book') + '.'];
+                    for (const s of data.skipped) {
+                        parts.push('Not in ' + s.library + ': ' + s.reason + '.');
+                    }
+                    notice = parts.join(' ');
+                    shownList = null;
+                    go('books', { ...params, [key]: data.name, book: undefined });
+                } catch (problem) {
+                    status.textContent = problem.message;
+                    status.className = 'ol-status ol-error';
+                    save.disabled = cancel.disabled = false;
+                }
+            } },
+                el('label', { htmlFor: input.id }, 'New name of this ' + what),
+                el('div', { class: 'ol-rename-row' }, input, save, cancel),
+                el('p', { class: 'ol-sub' }, 'Changes all books with this name in your Calibre libraries, and the folders of the books if it is an author. '
+                    + 'If the new name is used already, the two become one. Close Calibre first.'),
+                status));
+            input.focus();
+            input.select();
+        };
+        const start = el('button', { type: 'button', class: 'ol-rename-start', onclick: open }, 'Rename ' + what + '…');
+        box.append(start, el('span', { class: 'ol-beta' }, 'Beta'));
+        return box;
     }
 
     async function showAuthorSeries(params, mine) {
@@ -601,6 +676,7 @@
             comments: el('textarea', { rows: 7, value: c.comments }),
         };
         const initial = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
+        const columns = (c.fields || []).filter((f) => f.editable).map(columnInput).filter(Boolean);
         const lists = el('div', { hidden: true });
         api('GET', '/api/books/' + book.id + '/names').then((names) => {
             lists.append(
@@ -608,7 +684,9 @@
                 suggest(inputs.series, 'ol-l-series', names.series),
                 suggest(inputs.tags, 'ol-l-tags', names.tags, ','),
                 suggest(inputs.publisher, 'ol-l-publishers', names.publishers),
-                suggest(inputs.languages, 'ol-l-languages', state.languages, ','));
+                suggest(inputs.languages, 'ol-l-languages', state.languages, ','),
+                columns.filter((x) => names.columns && names.columns[x.f.label])
+                    .map((x) => suggest(x.input, 'ol-l-c-' + x.f.label, names.columns[x.f.label], x.f.multiple ? (x.f.names ? '&' : ',') : null)));
         }).catch(() => {});
 
         // Cover: chosen here, written together with the other fields
@@ -663,7 +741,8 @@
         const save = el('button', { type: 'submit', class: 'primary' }, 'Save');
         const cancel = el('button', { type: 'button', onclick: () => leave() && drawBook(book) }, 'Cancel');
         const changed = () => Object.keys(inputs).filter((k) => inputs[k].value !== initial[k]);
-        const dirty = () => changed().length > 0 || newCover !== null;
+        const changedColumns = () => columns.filter((x) => x.state() !== x.initial);
+        const dirty = () => changed().length > 0 || changedColumns().length > 0 || newCover !== null;
         const leave = () => !dirty() || window.confirm('Discard your changes?');
         dialog.dataset.editing = '1';
         dialog.mayLeave = leave;
@@ -679,6 +758,9 @@
                             : key === 'identifiers' ? readIdentifiers(value)
                                 : key === 'rating' ? Number(value) : value;
                 }
+                if (changedColumns().length) {
+                    fields.custom = Object.fromEntries(changedColumns().map((x) => [x.f.label, x.read()]));
+                }
             } catch (problem) {
                 status.textContent = problem.message;
                 status.className = 'ol-status ol-error';
@@ -691,7 +773,12 @@
                 if (Object.keys(fields).length) {
                     await api('PUT', '/api/books/' + book.id, { fields, rev: c.rev });
                     for (const key of Object.keys(fields)) {
-                        initial[key] = inputs[key].value;
+                        if (key in inputs) {
+                            initial[key] = inputs[key].value;
+                        }
+                    }
+                    for (const x of columns) {
+                        x.initial = x.state();
                     }
                     c.rev = '';
                 }
@@ -724,6 +811,10 @@
                 el('div', { class: 'ol-pair' }, field('publisher', 'Publisher', inputs.publisher), field('pubdate', 'Published', inputs.pubdate)),
                 el('div', { class: 'ol-pair' }, field('languages', 'Languages', inputs.languages), field('rating', 'Rating', inputs.rating)),
                 field('comments', 'Description', inputs.comments, c.formatted ? 'This description has formatting, which is lost if you change it here' : null),
+                columns.length ? el('details', { open: true, class: 'ol-columns' }, el('summary', null, 'Columns'),
+                    columns.map((x) => x.index
+                        ? el('div', { class: 'ol-pair' }, field('c-' + x.f.label, x.f.name, x.input, x.hint), field('c-' + x.f.label + '-index', 'Number', x.index))
+                        : field('c-' + x.f.label, x.f.name, x.input, x.hint))) : null,
                 el('details', null, el('summary', null, 'Sorting and identifiers'),
                     field('sort', 'Sort title as', inputs.sort, 'Follows the title unless you change it'),
                     field('author_sort', 'Sort authors as', inputs.author_sort, 'Follows the authors unless you change it'),
@@ -734,6 +825,61 @@
             lists);
         dialog.replaceChildren(closeButton(), form);
         inputs.title.focus();
+    }
+
+    /** An input for a custom column of Calibre, with how to read it */
+    function columnInput(f) {
+        const text = (value) => el('input', { type: 'text', value });
+        const choice = (options, value) => el('select', null, options.map(([v, label]) => el('option', { value: v, selected: v === value }, label)));
+        let input;
+        let index = null;
+        let hint = null;
+        let read = () => input.value;
+        switch (f.type) {
+        case 'text':
+            if (f.multiple) {
+                input = text(f.value.join(f.names ? ' & ' : ', '));
+                hint = f.names ? 'Separate several with &' : 'Separate with commas';
+                read = () => (f.names ? splitAuthors : splitTags)(input.value);
+            } else {
+                input = text(f.value);
+            }
+            break;
+        case 'series':
+            input = text(f.value);
+            index = el('input', { type: 'number', step: '0.01', value: f.value ? f.index : 1 });
+            read = () => ({ value: input.value.trim(), index: index.value === '' ? 1 : Number(index.value) });
+            break;
+        case 'enumeration':
+            input = choice([['', '—'], ...f.values.map((v) => [v, v])], f.value);
+            break;
+        case 'comments':
+            input = el('textarea', { rows: 4, value: f.value });
+            hint = f.formatted ? 'This text has formatting, which is lost if you change it here' : null;
+            break;
+        case 'datetime':
+            input = el('input', { type: 'date', value: f.value });
+            break;
+        case 'int':
+        case 'float':
+            input = el('input', { type: 'number', step: f.type === 'int' ? '1' : 'any', value: f.value === '' || f.value === null ? '' : String(f.value) });
+            read = () => (input.value === '' ? null : Number(input.value));
+            break;
+        case 'bool':
+            input = choice([['', '—'], ['yes', 'Yes'], ['no', 'No']], f.value === true ? 'yes' : f.value === false ? 'no' : '');
+            read = () => (input.value === '' ? null : input.value === 'yes');
+            break;
+        case 'rating': {
+            const steps = f.half ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [0, 2, 4, 6, 8, 10];
+            input = choice(steps.map((n) => [String(n), n ? stars(n) + ' (' + n / 2 + ' of 5)' : 'No rating']), String(f.value || 0));
+            read = () => Number(input.value);
+            break;
+        }
+        default:
+            return null;
+        }
+        const snapshot = () => input.value + (index ? '\u0000' + index.value : '');
+        return { f, input, index, hint, read, state: snapshot, initial: snapshot() };
     }
 
     function readIdentifiers(value) {

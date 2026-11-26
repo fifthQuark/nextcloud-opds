@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0 – unreleased
+
+* Calibre beta: custom columns can be edited together with the other fields of a book: text, lists,
+  names, fixed values, series with their number, long text, dates, numbers, yes/no and ratings.
+  They are written to `metadata.opf` as well, so *Restore database* in Calibre keeps them.
+* Calibre beta: an author, series, genre, publisher or value of a custom column can be renamed in all
+  books at once from the list of its books. If the new name is used already, the two become one, as
+  in Calibre. Renaming an author moves the folders of the books.
+* All books of Calibre libraries are read again once after the update.
+
 ## 1.8.0 – 2026-11-26
 
 * Calibre beta: a library with a conflict copy of `metadata.db` (Nextcloud, Syncthing and others name

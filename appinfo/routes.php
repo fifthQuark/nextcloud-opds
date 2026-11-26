@@ -45,6 +45,7 @@ return [
         ['name' => 'calibre#setCover', 'url' => '/api/books/{id}/cover', 'verb' => 'POST', 'requirements' => ['id' => '\d+']],
         ['name' => 'calibre#coverFromFile', 'url' => '/api/books/{id}/cover/file', 'verb' => 'POST', 'requirements' => ['id' => '\d+']],
         ['name' => 'calibre#removeCover', 'url' => '/api/books/{id}/cover', 'verb' => 'DELETE', 'requirements' => ['id' => '\d+']],
+        ['name' => 'calibre#rename', 'url' => '/api/rename', 'verb' => 'POST'],
         ['name' => 'calibre#libraries', 'url' => '/api/calibre', 'verb' => 'GET'],
         ['name' => 'calibre#create', 'url' => '/api/calibre', 'verb' => 'POST'],
         ['name' => 'calibre#import', 'url' => '/api/calibre/import', 'verb' => 'POST'],

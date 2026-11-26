@@ -128,3 +128,10 @@
     .ol-pair { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .ol-sort { margin-inline-start: 0; }
 }
+.ol-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -6px 0 16px; }
+.ol-rename form { flex: 1 1 100%; max-width: 640px; }
+.ol-rename label { display: block; margin-bottom: 2px; font-weight: 600; }
+.ol-rename-row { display: flex; gap: 8px; }
+.ol-rename-row input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ol-columns { margin: 4px 0 12px; }
+.ol-columns summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }

@@ -270,7 +270,7 @@ class LibraryController extends Controller {
         return [
             'sorts' => $this->columns->sorts($uid),
             'rated' => $this->repository->hasRatings($uid),
-            'columns' => array_map(static fn (array $c): array => ['kind' => self::COLUMN . $c['key'], 'name' => $c['name']], $this->columns->browsable($uid)),
+            'columns' => array_map(static fn (array $c): array => ['kind' => self::COLUMN . $c['key'], 'key' => $c['key'], 'name' => $c['name'], 'type' => $c['type']], $this->columns->browsable($uid)),
         ];
     }
 
@@ -310,7 +310,7 @@ class LibraryController extends Controller {
                     'formatted' => $record['comments'] !== '' && preg_match('/<(?!\/?(p|br|div)\b)[a-z]/i', $record['comments']) === 1,
                     'comments' => \OCA\Opds\Metadata\Text::plain($record['comments'], 100000),
                     'languageNames' => array_map(static fn (string $c): string => Languages::name($c), $record['languages']),
-                ] + array_intersect_key($record, array_flip(['rev', 'title', 'sort', 'authors', 'author_sort', 'series', 'series_index', 'tags', 'publisher', 'pubdate', 'rating', 'identifiers', 'has_cover', 'path']));
+                ] + array_intersect_key($record, array_flip(['rev', 'title', 'sort', 'authors', 'author_sort', 'series', 'series_index', 'tags', 'publisher', 'pubdate', 'rating', 'identifiers', 'has_cover', 'path', 'fields']));
             });
         } catch (\Throwable $e) {
             $this->logger->warning('OPDS: cannot read the Calibre record of ' . $book->path . ': ' . $e->getMessage(), ['app' => Application::APP_ID]);

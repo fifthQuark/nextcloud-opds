@@ -197,6 +197,8 @@ class CalibreDb {
             'identifiers' => $identifiers,
             'formats' => $formats,
             'custom' => $this->custom($id),
+            'columns' => $this->stored($id),
+            'fields' => $this->editable($id),
             'tags_hierarchy' => $this->tagsHierarchy(),
         ];
     }
@@ -204,7 +206,7 @@ class CalibreDb {
     /**
      * Custom columns. Columns built from a template ("composite") have no stored values.
      *
-     * @return list<array{id: int, label: string, name: string, type: string, normalized: bool, hierarchy: bool, order: array<string,int>}>
+     * @return list<array{id: int, label: string, name: string, type: string, normalized: bool, hierarchy: bool, order: array<string,int>, multiple: bool, names: bool, editable: bool, display: array<string,mixed>}>
      */
     public function columns(): array {
         if ($this->columns !== null) {
@@ -212,9 +214,10 @@ class CalibreDb {
         }
         $this->columns = [];
         $nested = $this->hierarchies();
-        foreach ($this->optional("SELECT id, label, name, datatype, normalized, display FROM custom_columns WHERE mark_for_delete = 0 AND datatype <> 'composite' ORDER BY id") as $row) {
+        foreach ($this->optional("SELECT * FROM custom_columns WHERE mark_for_delete = 0 AND datatype <> 'composite' ORDER BY id") as $row) {
             $display = json_decode((string)$row['display'], true);
-            $values = is_array($display) && is_array($display['enum_values'] ?? null) ? array_values(array_filter($display['enum_values'], 'is_string')) : [];
+            $display = is_array($display) ? $display : [];
+            $values = is_array($display['enum_values'] ?? null) ? array_values(array_filter($display['enum_values'], 'is_string')) : [];
             $this->columns[] = [
                 'id' => (int)$row['id'],
                 'label' => (string)$row['label'],
@@ -223,9 +226,23 @@ class CalibreDb {
                 'normalized' => (bool)$row['normalized'],
                 'hierarchy' => $row['datatype'] === 'text' && in_array('#' . $row['label'], $nested, true),
                 'order' => array_flip($values),
+                'multiple' => $row['datatype'] === 'text' && (bool)($row['is_multiple'] ?? false),
+                'names' => (bool)($display['is_names'] ?? false),
+                'editable' => (bool)($row['editable'] ?? true),
+                'display' => $display,
             ];
         }
         return $this->columns;
+    }
+
+    /** @return array{id: int, label: string, name: string, type: string, normalized: bool, hierarchy: bool, order: array<string,int>, multiple: bool, names: bool, editable: bool, display: array<string,mixed>}|null */
+    public function column(string $label): ?array {
+        foreach ($this->columns() as $column) {
+            if ($column['label'] === $label) {
+                return $column;
+            }
+        }
+        return null;
     }
 
     public function tagsHierarchy(): bool {
@@ -271,6 +288,84 @@ class CalibreDb {
         return $out;
     }
 
+    /**
+     * The stored values of every custom column, as Calibre keeps them in metadata.opf.
+     *
+     * @return list<array{label: string, name: string, type: string, multiple: bool, names: bool, editable: bool, display: array<string,mixed>, id: int, value: mixed, extra: ?float}>
+     */
+    private function stored(int $id): array {
+        $out = [];
+        foreach ($this->columns() as $column) {
+            $table = 'custom_column_' . $column['id'];
+            $extra = $column['type'] === 'series' ? ', l.extra AS x' : '';
+            $rows = $this->optional($column['normalized']
+                ? "SELECT c.value AS v$extra FROM books_{$table}_link l JOIN $table c ON c.id = l.value WHERE l.book = ? ORDER BY l.id"
+                : "SELECT value AS v FROM $table WHERE book = ?", [$id]);
+            $values = [];
+            foreach ($rows as $row) {
+                if ($row['v'] !== null && $row['v'] !== '') {
+                    $values[] = match ($column['type']) {
+                        'bool' => (int)$row['v'] === 1,
+                        'int', 'rating' => (int)$row['v'],
+                        'float' => (float)$row['v'],
+                        default => (string)$row['v'],
+                    };
+                }
+            }
+            $value = $column['multiple'] ? $values : ($values[0] ?? null);
+            if ($column['type'] === 'rating' && $value === 0) {
+                $value = null;
+            }
+            $out[] = array_intersect_key($column, array_flip(['id', 'label', 'name', 'type', 'multiple', 'names', 'editable', 'display'])) + [
+                'value' => $value,
+                'extra' => $column['type'] === 'series' && $value !== null ? (float)($rows[0]['x'] ?? 1.0) : null,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Custom columns as the editor shows them: dates in the time zone of the user, descriptions as text.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function editable(int $id): array {
+        $out = [];
+        foreach ($this->stored($id) as $c) {
+            $value = $c['value'];
+            if ($c['type'] === 'datetime') {
+                $value = $value !== null ? $this->dateFromDb((string)$value) : '';
+            } elseif ($c['type'] === 'comments' && $value !== null && self::isHtml($c['display'])) {
+                $value = \OCA\Opds\Metadata\Text::plain((string)$value, 100000);
+            }
+            $out[] = [
+                'label' => $c['label'],
+                'name' => $c['name'],
+                'type' => $c['type'],
+                'multiple' => $c['multiple'],
+                'names' => $c['names'],
+                'editable' => $c['editable'],
+                'values' => array_values(array_filter(array_map('strval', array_keys($this->columnOrder($c['label']))), static fn (string $v): bool => $v !== '')),
+                'half' => (bool)($c['display']['allow_half_stars'] ?? false),
+                'formatted' => $c['type'] === 'comments' && $c['value'] !== null && self::isHtml($c['display'])
+                    && preg_match('/<(?!\/?(p|br|div)\b)[a-z]/i', (string)$c['value']) === 1,
+                'value' => $value ?? ($c['multiple'] ? [] : ''),
+                'index' => $c['extra'],
+            ];
+        }
+        return $out;
+    }
+
+    /** @return array<string,int> */
+    private function columnOrder(string $label): array {
+        return $this->column($label)['order'] ?? [];
+    }
+
+    /** Long-text columns hold HTML unless the user chose plain text or Markdown for them. */
+    public static function isHtml(array $display): bool {
+        return ($display['interpret_as'] ?? 'html') === 'html';
+    }
+
     private static function number(float $n): string {
         return floor($n) === $n && abs($n) < 1e15 ? sprintf('%.0F', $n) : rtrim(rtrim(sprintf('%.4F', $n), '0'), '.');
     }
@@ -305,14 +400,58 @@ class CalibreDb {
         return (int)$this->db->value('SELECT COUNT(*) FROM books WHERE path = ? COLLATE NOCASE AND id <> ?', [$path, $exceptId]) > 0;
     }
 
-    /** @return list<string> existing names for suggestions while editing */
+    /**
+     * @param string $kind authors, series, tags, publishers, or "#label" of a custom column
+     * @return list<string> existing names for suggestions while editing
+     */
     public function names(string $kind): array {
-        $table = match ($kind) {
-            'authors', 'series', 'tags', 'publishers' => $kind,
-            default => throw new \InvalidArgumentException('Unknown kind ' . $kind),
-        };
-        $names = array_map('strval', array_column($this->db->query("SELECT name FROM $table ORDER BY name LIMIT 5000"), 'name'));
+        [$table, $column] = $this->category($kind, true);
+        $names = array_map('strval', array_column($this->db->query("SELECT $column AS name FROM $table ORDER BY $column LIMIT 5000"), 'name'));
         return $kind === 'authors' ? array_map(static fn (string $n): string => str_replace('|', ',', $n), $names) : $names;
+    }
+
+    /** @return array<string,list<string>> label => existing values, for the custom columns that have a list of them */
+    public function customNames(): array {
+        $out = [];
+        foreach ($this->columns() as $column) {
+            if ($column['editable'] && in_array($column['type'], ['text', 'series'], true)) {
+                $out[$column['label']] = $this->names('#' . $column['label']);
+            }
+        }
+        return $out;
+    }
+
+    /** Whether a book has this author, series, tag, publisher or value of a custom column. */
+    public function has(string $kind, string $name): bool {
+        try {
+            [$table, $column] = $this->category($kind);
+        } catch (CalibreException $e) {
+            return false;
+        }
+        return $this->db->value("SELECT id FROM $table WHERE $column = ?", [$kind === 'authors' ? str_replace(',', '|', $name) : $name]) !== null;
+    }
+
+    /**
+     * Tables of a kind of name.
+     *
+     * @param bool $values also custom columns that are not renamed, like ratings and fixed lists
+     * @return array{0: string, 1: string, 2: string, 3: string} table, its column with the name, link table, its column with the id
+     */
+    private function category(string $kind, bool $values = false): array {
+        if (in_array($kind, ['authors', 'series', 'tags', 'publishers'], true)) {
+            return [$kind, 'name', 'books_' . $kind . '_link', match ($kind) {
+                'authors' => 'author', 'tags' => 'tag', 'publishers' => 'publisher', default => 'series',
+            }];
+        }
+        $column = str_starts_with($kind, '#') ? $this->column(substr($kind, 1)) : null;
+        if ($column === null || !$column['normalized'] || (!$values && !in_array($column['type'], ['text', 'series'], true))) {
+            throw new CalibreException('Names of this kind cannot be changed');
+        }
+        if (!$column['editable']) {
+            throw new CalibreException('The column "' . $column['name'] . '" cannot be edited');
+        }
+        $table = 'custom_column_' . $column['id'];
+        return [$table, 'value', 'books_' . $table . '_link', 'value'];
     }
 
     // ---------------------------------------------------------------- writing
@@ -379,7 +518,59 @@ class CalibreDb {
                 $this->db->run('INSERT INTO identifiers (book, type, val) VALUES (?, ?, ?)', [$id, (string)$type, (string)$value]);
             }
         }
+        foreach (is_array($c['custom'] ?? null) ? $c['custom'] : [] as $label => $value) {
+            $column = $this->column((string)$label) ?? throw new CalibreException('The column "' . $label . '" is not in this library any more');
+            if (!$column['editable']) {
+                throw new CalibreException('The column "' . $column['name'] . '" cannot be edited');
+            }
+            $this->setCustom($id, $column, FieldReader::column($column, $value));
+        }
         $this->touch($id);
+    }
+
+    /**
+     * Renames an author, series, tag, publisher or value of a custom column in all books, or, if
+     * the new name is there already, merges the two the way Calibre does.
+     *
+     * @param string $kind see names()
+     * @return array{books: list<int>, name: string} the books that changed, and the name they have now
+     */
+    public function rename(string $kind, string $from, string $to): array {
+        [$table, $column, $link, $linkColumn] = $this->category($kind);
+        if ($kind === 'authors') {
+            [$from, $to] = [str_replace(',', '|', $from), str_replace(',', '|', $to)];
+        }
+        $old = $this->db->query("SELECT id, $column AS name FROM $table WHERE $column = ?", [$from])[0] ?? null;
+        $shown = static fn (string $n): string => $kind === 'authors' ? str_replace('|', ',', $n) : $n;
+        if ($old === null) {
+            return ['books' => [], 'name' => $shown($to)];
+        }
+        $oldId = (int)$old['id'];
+        $books = array_map('intval', array_column($this->db->query("SELECT DISTINCT book FROM $link WHERE $linkColumn = ? ORDER BY book", [$oldId]), 'book'));
+        $target = $this->db->value("SELECT id FROM $table WHERE $column = ? AND id <> ?", [$to, $oldId]);
+        if ($target === null) {
+            if ((string)$old['name'] === $to) {
+                return ['books' => [], 'name' => $shown($to)];
+            }
+            $this->db->run("UPDATE $table SET $column = ? WHERE id = ?", [$to, $oldId]);
+            if ($kind === 'authors') {
+                $this->db->run('UPDATE authors SET sort = ? WHERE id = ?', [Naming::authorSort(str_replace('|', ',', $to)), $oldId]);
+            }
+        } else {
+            // A book that has both keeps one of them, in the place of the old name
+            $this->db->run("DELETE FROM $link WHERE $linkColumn = ? AND book IN (SELECT book FROM $link WHERE $linkColumn = ?)", [(int)$target, $oldId]);
+            $this->db->run("UPDATE $link SET $linkColumn = ? WHERE $linkColumn = ?", [(int)$target, $oldId]);
+            $this->db->run("DELETE FROM $table WHERE id = ?", [$oldId]);
+            // Calibre keeps the spelling of the name that was there
+            $to = (string)$this->db->value("SELECT $column FROM $table WHERE id = ?", [(int)$target]);
+        }
+        foreach ($books as $book) {
+            if ($kind === 'authors') {
+                $this->db->run('UPDATE books SET author_sort = ? WHERE id = ?', [$this->authorSortOf($book), $book]);
+            }
+            $this->touch($book);
+        }
+        return ['books' => $books, 'name' => $shown($to)];
     }
 
     /** @param array<string,mixed> $fields see FIELDS */
@@ -483,24 +674,62 @@ class CalibreDb {
         $this->dropUnused('ratings', 'rating');
     }
 
-    /** Id of the author, series, tag or publisher with this name, created if needed. */
-    private function item(string $table, string $name, ?string $sort = null): int {
-        $row = $this->db->query("SELECT id, name FROM $table WHERE name = ?", [$name])[0] ?? null;
+    /** @param mixed $value as FieldReader::column() returns it */
+    private function setCustom(int $id, array $column, mixed $value): void {
+        $table = 'custom_column_' . $column['id'];
+        if (!$column['normalized']) {
+            $this->db->run("DELETE FROM $table WHERE book = ?", [$id]);
+            if ($value !== null && $value !== '') {
+                $this->db->run("INSERT INTO $table (book, value) VALUES (?, ?)", [$id, match ($column['type']) {
+                    'datetime' => $this->dateToDb((string)$value),
+                    'bool' => $value ? 1 : 0,
+                    default => $value,
+                }]);
+            }
+            return;
+        }
+        $link = 'books_' . $table . '_link';
+        $index = null;
+        if ($column['type'] === 'series') {
+            [$value, $index] = [$value['value'], $value['index']];
+        }
+        $this->db->run("DELETE FROM $link WHERE book = ?", [$id]);
+        $seen = [];
+        foreach (is_array($value) ? $value : ($value === '' || $value === 0 ? [] : [$value]) as $one) {
+            $item = $this->item($table, $one, null, 'value', $link, 'value');
+            if (isset($seen[$item])) {
+                continue;
+            }
+            $seen[$item] = true;
+            if ($index !== null) {
+                $this->db->run("INSERT INTO $link (book, value, extra) VALUES (?, ?, ?)", [$id, $item, (float)$index]);
+            } else {
+                $this->db->run("INSERT INTO $link (book, value) VALUES (?, ?)", [$id, $item]);
+            }
+        }
+        // As Calibre does when it opens the library
+        $this->db->run("DELETE FROM $table WHERE id NOT IN (SELECT value FROM $link)");
+    }
+
+    /** Id of the author, series, tag, publisher or value of a custom column, created if needed. */
+    private function item(string $table, string|int $name, ?string $sort = null, string $nameColumn = 'name', ?string $link = null, ?string $linkColumn = null): int {
+        $row = $this->db->query("SELECT id, $nameColumn AS name FROM $table WHERE $nameColumn = ?", [$name])[0] ?? null;
         if ($row === null) {
             if ($sort !== null) {
-                $this->db->run("INSERT INTO $table (name, sort) VALUES (?, ?)", [$name, $sort]);
+                $this->db->run("INSERT INTO $table ($nameColumn, sort) VALUES (?, ?)", [$name, $sort]);
             } else {
-                $this->db->run("INSERT INTO $table (name) VALUES (?)", [$name]);
+                $this->db->run("INSERT INTO $table ($nameColumn) VALUES (?)", [$name]);
             }
             return $this->db->lastId();
         }
-        if ($row['name'] !== $name) {
+        if ((string)$row['name'] !== (string)$name) {
             // Same name in other capitals: only corrected while no other book uses it
-            $column = match ($table) {
+            $link ??= 'books_' . $table . '_link';
+            $linkColumn ??= match ($table) {
                 'authors' => 'author', 'tags' => 'tag', 'publishers' => 'publisher', default => $table,
             };
-            if ((int)$this->db->value("SELECT COUNT(*) FROM books_{$table}_link WHERE $column = ?", [(int)$row['id']]) === 0) {
-                $this->db->run("UPDATE $table SET name = ? WHERE id = ?", [$name, (int)$row['id']]);
+            if ((int)$this->db->value("SELECT COUNT(*) FROM $link WHERE $linkColumn = ?", [(int)$row['id']]) === 0) {
+                $this->db->run("UPDATE $table SET $nameColumn = ? WHERE id = ?", [$name, (int)$row['id']]);
                 if ($sort !== null) {
                     $this->db->run("UPDATE $table SET sort = ? WHERE id = ?", [$sort, (int)$row['id']]);
                 }

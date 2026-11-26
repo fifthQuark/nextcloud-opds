@@ -73,7 +73,111 @@ class FieldReader {
                 $out['identifiers'][$type] = str_replace(',', '|', $value);
             }
         }
+        if (array_key_exists('custom', $in) && is_array($in['custom'])) {
+            // Checked against the type of each column when the library is open
+            $out['custom'] = array_slice($in['custom'], 0, 200, true);
+        }
         return $out;
+    }
+
+    /**
+     * A value for a custom column of Calibre.
+     *
+     * @param array{type: string, name: string, multiple: bool, names: bool, display: array<string,mixed>, order: array<string,int>} $column
+     * @return mixed list<string> for lists, ['value' => string, 'index' => float] for series, null or '' for no value
+     */
+    public static function column(array $column, mixed $value): mixed {
+        $name = '"' . $column['name'] . '"';
+        $text = static fn (mixed $v, int $max = 1000): string => is_scalar($v) ? mb_substr(Text::clean((string)$v), 0, $max) : '';
+        $empty = $value === null || $value === '' || $value === [];
+        switch ($column['type']) {
+            case 'text':
+                if (!$column['multiple']) {
+                    return $text($value);
+                }
+                $out = [];
+                foreach (is_array($value) ? $value : [] as $item) {
+                    $item = $text($item, 500);
+                    // The separators of Calibre: & between names, commas otherwise
+                    $item = $column['names'] ? trim(str_replace('&', '+', $item)) : trim(str_replace(',', ';', $item));
+                    if ($item !== '') {
+                        $out[mb_strtolower($item)] ??= $item;
+                    }
+                }
+                return array_slice(array_values($out), 0, 500);
+            case 'enumeration':
+                $value = $text($value);
+                if ($value === '') {
+                    return '';
+                }
+                foreach (array_keys($column['order']) as $allowed) {
+                    if (mb_strtolower((string)$allowed) === mb_strtolower($value)) {
+                        return (string)$allowed;
+                    }
+                }
+                throw new CalibreException($name . ' can only be one of: ' . implode(', ', array_map('strval', array_keys($column['order']))));
+            case 'series':
+                $series = is_array($value) ? $text($value['value'] ?? '') : $text($value);
+                $index = is_array($value) ? ($value['index'] ?? 1) : 1;
+                if ($index === '' || $index === null) {
+                    $index = 1;
+                }
+                if (!is_numeric($index) || abs((float)$index) > 1_000_000) {
+                    throw new CalibreException('The number in ' . $name . ' must be a number');
+                }
+                return ['value' => $series, 'index' => round((float)$index, 2)];
+            case 'comments':
+                $value = is_scalar($value) ? (string)$value : '';
+                return CalibreDb::isHtml($column['display']) ? self::paragraphs($value) : mb_substr(trim(str_replace("\r", '', Text::utf8($value))), 0, 100000);
+            case 'datetime':
+                return self::day($text($value));
+            case 'int':
+            case 'float':
+                if ($empty) {
+                    return null;
+                }
+                if (!is_numeric($value) || abs((float)$value) > 1e15 || ($column['type'] === 'int' && (float)$value !== floor((float)$value))) {
+                    throw new CalibreException($name . ' must be ' . ($column['type'] === 'int' ? 'a whole number' : 'a number'));
+                }
+                return $column['type'] === 'int' ? (int)$value : (float)$value;
+            case 'bool':
+                if ($empty) {
+                    return null;
+                }
+                if (is_bool($value)) {
+                    return $value;
+                }
+                return match (mb_strtolower($text($value))) {
+                    'yes', 'true', '1' => true,
+                    'no', 'false', '0' => false,
+                    default => throw new CalibreException($name . ' must be Yes, No or empty'),
+                };
+            case 'rating':
+                $rating = is_numeric($value) ? max(0, min(10, (int)round((float)$value))) : 0;
+                // Half stars only where the column allows them
+                return ($column['display']['allow_half_stars'] ?? false) ? $rating : 2 * (int)round($rating / 2);
+            default:
+                throw new CalibreException($name . ' cannot be edited here');
+        }
+    }
+
+    /**
+     * The new name of an author, series, tag, publisher or value of a custom column.
+     *
+     * @param array{multiple: bool, names: bool}|null $column for "#label"
+     */
+    public function newName(string $kind, mixed $name, ?array $column = null): string {
+        $name = $this->text($name, 1000);
+        if ($name === '') {
+            throw new CalibreException('The new name must not be empty');
+        }
+        if (($kind === 'authors' || ($column['names'] ?? false)) && str_contains($name, '&')) {
+            throw new CalibreException('A name cannot contain &, which separates names in Calibre');
+        }
+        if ($kind === 'tags' || (($column['multiple'] ?? false) && !($column['names'] ?? false))) {
+            $name = str_replace(',', ';', $name);
+        }
+        return $name;
     }
 
     /** Plain text as the HTML that Calibre stores. */
@@ -93,6 +197,10 @@ class FieldReader {
 
     /** "1999" or "1999-05" -> a full date */
     public function date(string $value): string {
+        return self::day($value);
+    }
+
+    private static function day(string $value): string {
         $value = trim($value);
         if ($value === '') {
             return '';

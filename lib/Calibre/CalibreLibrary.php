@@ -234,6 +234,27 @@ class CalibreLibrary {
     }
 
     /**
+     * Renames an author, series, tag, publisher or value of a custom column in every book of the
+     * library, and the folders of the books whose first author is renamed.
+     *
+     * @param string $kind see CalibreDb::names()
+     * @return array{books: list<int>, name: string} see CalibreDb::rename()
+     */
+    public function rename(string $uid, Folder $library, string $kind, string $from, string $to): array {
+        return $this->change($uid, $library, function (CalibreDb $db, array &$undo) use ($library, $kind, $from, $to): array {
+            return $db->transaction(function () use ($db, $library, $kind, $from, $to, &$undo): array {
+                $result = $db->rename($kind, $from, $to);
+                if ($kind === 'authors') {
+                    foreach ($result['books'] as $id) {
+                        $this->relocate($db, $library, $id, $undo);
+                    }
+                }
+                return $result;
+            });
+        }, true);
+    }
+
+    /**
      * @param string|null $data image of any supported type, null removes the cover
      * @return array<string,mixed> the record afterwards
      */
@@ -509,10 +530,10 @@ class CalibreLibrary {
      *
      * @template T
      * @param callable(CalibreDb, array): T $fn gets a list to which it adds steps that undo its file changes
-     * @param int|null $opfFor book whose metadata.opf is rewritten afterwards
+     * @param int|bool|null $opfFor book whose metadata.opf is rewritten afterwards, true for the books in "books" of what $fn returns
      * @return T
      */
-    private function change(string $uid, Folder $library, callable $fn, ?int $opfFor = null): mixed {
+    private function change(string $uid, Folder $library, callable $fn, int|bool|null $opfFor = null): mixed {
         $lock = 'opds/calibre/' . $library->getId();
         try {
             $this->locks->acquireLock($lock, ILockingProvider::LOCK_EXCLUSIVE, 'Calibre library');
@@ -541,11 +562,18 @@ class CalibreLibrary {
                         throw new CalibreException($reason);
                     }
                     $result = $fn($db, $undo);
-                    $record = $opfFor !== null ? $db->get($opfFor) : null;
+                    $records = [];
+                    foreach ($opfFor === true ? $result['books'] : (is_int($opfFor) ? [$opfFor] : []) as $id) {
+                        $records[] = $db->get($id);
+                    }
                 } finally {
                     $db->close();
                 }
 
+                if ($undo === [] && sha1_file($temp) === $before) {
+                    // Nothing to save, such as a name that no book of this library has
+                    return $result;
+                }
                 $this->makeBackup($uid, $library, $original);
                 if ($this->hash($dbFile) !== $before) {
                     throw new CalibreException('The library was changed by someone else at the same time. Nothing was saved; please try again');
@@ -557,8 +585,10 @@ class CalibreLibrary {
             } finally {
                 $this->cleanup($original);
             }
-            if ($record !== null) {
-                $this->writeOpf($library, $record);
+            foreach ($records as $record) {
+                if ($record !== null) {
+                    $this->writeOpf($library, $record);
+                }
             }
             return $result;
         } finally {

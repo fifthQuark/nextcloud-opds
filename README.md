@@ -152,10 +152,17 @@ the library folder:
 * **Files:** the formats of a book are those listed in Calibre. Other files in its folder, such as
   those in `data`, are not books of their own and left out.
 * **Editing:** a book gets an *Edit* button for title, authors, series, tags, publisher, date,
-  languages, rating, description, identifiers, sort names and the cover (upload, take from the
-  book file, or remove). A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
+  languages, rating, description, identifiers, sort names, custom columns and the cover (upload,
+  take from the book file, or remove). Custom columns of every type can be edited except those built
+  from a template and those Calibre marks as not editable; fixed-value columns only take their
+  values. A change updates `metadata.db`, `cover.jpg` and `metadata.opf`, and renames
   the folder and files to `Author/Title (id)/Title - Author.ext` when the title or first author
   changes. The stored book files are never changed inside.
+* **Renaming:** the list of books of an author, series, genre, publisher or value of a text or
+  series column has a *Rename* button. It renames the name in every book of every Calibre library
+  in the library folder, as Calibre's tag browser does: if the new name is used already, the two
+  become one with the spelling that was there, and the folders of the books move along when an
+  author is renamed. Books outside Calibre libraries keep their name.
 * **Current folder:** *Convert the current folder* turns the library folder itself into a Calibre
   library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
   inside it. Nothing is copied, reader links keep working, and folders that become empty are
@@ -178,8 +185,8 @@ made before an edit; the last ones can be downloaded from the settings page. `me
 the folder, close it and let the files synchronise before editing here, and the other way round;
 otherwise the sync client will report a conflict on `metadata.db`. Where the conflict copy reaches
 the server, as with Syncthing, nothing can be edited until you have chosen a version in Calibre and
-deleted the copy; the Nextcloud client usually keeps it on the computer, so look there as well. Deleting books,
-editing custom columns and author notes remain tasks for Calibre. Custom columns are kept.
+deleted the copy; the Nextcloud client usually keeps it on the computer, so look there as well. Deleting books
+and author notes remain tasks for Calibre.
 
 ## Server-side tools
 

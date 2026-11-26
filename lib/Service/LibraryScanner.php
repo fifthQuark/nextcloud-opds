@@ -134,24 +134,32 @@ class LibraryScanner {
 
     /** Brings the index up to date after a book of a Calibre library was edited. */
     public function refreshCalibreBook(string $uid, Folder $library, int $id): void {
-        $record = $this->calibre->read($uid, $library, static fn (CalibreDb $db): ?array => $db->get($id));
-        if ($record === null || $record['path'] === '') {
-            return;
-        }
+        $this->refreshCalibreBooks($uid, $library, [$id]);
+    }
+
+    /** @param list<int> $ids */
+    public function refreshCalibreBooks(string $uid, Folder $library, array $ids): void {
+        $records = $this->calibre->read($uid, $library, static fn (CalibreDb $db): array => array_map(static fn (int $id): ?array => $db->get($id), $ids));
         $userFolder = $this->rootFolder->getUserFolder($uid);
-        $folder = $library->get($record['path']);
-        if (!$folder instanceof Folder) {
-            return;
-        }
         $extensions = $this->config->getExtensions($uid);
-        $wanted = [];
-        foreach ($record['formats'] as $format => $name) {
-            $wanted[CalibreDb::pathKey($name . '.' . $format)] = true;
-        }
-        foreach ($folder->getDirectoryListing() as $file) {
-            if ($file instanceof File && isset($wanted[CalibreDb::pathKey($file->getName())])
-                && in_array(FilenameExtractor::format($file->getName()), $extensions, true)) {
-                $this->index($uid, $userFolder->getRelativePath($file->getPath()) ?? $file->getPath(), $file, '', $this->time->getTime(), $library, $record);
+        $now = $this->time->getTime();
+        foreach ($records as $record) {
+            if ($record === null || $record['path'] === '') {
+                continue;
+            }
+            $folder = $library->get($record['path']);
+            if (!$folder instanceof Folder) {
+                continue;
+            }
+            $wanted = [];
+            foreach ($record['formats'] as $format => $name) {
+                $wanted[CalibreDb::pathKey($name . '.' . $format)] = true;
+            }
+            foreach ($folder->getDirectoryListing() as $file) {
+                if ($file instanceof File && isset($wanted[CalibreDb::pathKey($file->getName())])
+                    && in_array(FilenameExtractor::format($file->getName()), $extensions, true)) {
+                    $this->index($uid, $userFolder->getRelativePath($file->getPath()) ?? $file->getPath(), $file, '', $now, $library, $record);
+                }
             }
         }
     }

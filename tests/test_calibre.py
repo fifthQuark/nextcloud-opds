@@ -7,6 +7,7 @@ Lets the app and a real Calibre work on the same library, in turns.
 import hashlib
 import os
 import re
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -56,7 +57,9 @@ class CalibreTest(unittest.TestCase):
         c.db(cls.library, 'add_format', '1', os.path.join(books, 'text.txt'))
         for label, name, kind, extra in [('genre', 'Genre', 'text', ['--is-multiple']), ('read', 'Read', 'bool', []), ('pages', 'Pages', 'int', []),
                                          ('shelf', 'Shelf', 'enumeration', ['--display', '{"enum_values": ["B", "A"]}']), ('notes', 'Notes', 'comments', []),
-                                         ('stars', 'Stars', 'rating', []), ('when', 'When', 'datetime', [])]:
+                                         ('stars', 'Stars', 'rating', []), ('when', 'When', 'datetime', []), ('price', 'Price', 'float', []),
+                                         ('cycle', 'Cycle', 'series', []), ('mood', 'Mood', 'text', []),
+                                         ('people', 'People', 'text', ['--is-multiple', '--display', '{"is_names": true}'])]:
             c.db(cls.library, 'add_custom_column', *extra, label, name, kind)
         c.set(cls.library, 1, tags='Fiction.Crime,Humour', rating='3', languages='eng,deu', identifiers='isbn:9780552166591,goodreads:34497', series='Saga [2]',
               publisher='Pub & Co', pubdate='2015-03-04', comments='<p>One <b>two</b></p>')
@@ -93,6 +96,20 @@ class CalibreTest(unittest.TestCase):
 
     def check(self, library):
         self.assertEqual([], self.calibre.problems(library))
+
+    def rename(self, kind, old, new, expect=200):
+        """(number of books, new name), or the answer of an error"""
+        answer = self.server.api('/api/rename', {'kind': kind, 'from': old, 'to': new}, expect=expect)
+        return (answer['books'], answer['name']) if expect == 200 else answer
+
+    def series_index(self, library, label, book):
+        db = sqlite3.connect(os.path.join(library, 'metadata.db'))
+        try:
+            column = db.execute('SELECT id FROM custom_columns WHERE label = ?', (label,)).fetchone()[0]
+            row = db.execute('SELECT extra FROM books_custom_column_%d_link WHERE book = ?' % column, (book,)).fetchone()
+            return row[0] if row else None
+        finally:
+            db.close()
 
     def same(self, a, b):
         """Two rows of calibredb list, without what depends on where the library is."""
@@ -146,6 +163,94 @@ class CalibreTest(unittest.TestCase):
         restored = self.calibre.list(library, 'genre', 'read', 'pages')
         self.assertEqual(set(rows), set(restored))
         self.same(row, restored[EDIT['title']])
+
+    def test_custom_columns(self):
+        source = os.path.join(self.temp.name, 'without-opf-' + uuid.uuid4().hex[:8])
+        shutil.copytree(self.library, source)
+        # Written from scratch, not only changed
+        os.remove(os.path.join(os.path.dirname(self.calibre.list(source)['First Book']['formats'][0]), 'metadata.opf'))
+        root = self.upload(source)
+        book = self.server.books()['First Book']
+        fields = {f['label']: f for f in book['calibre']['fields']}
+        self.assertEqual(({'SF', 'Kids'}, True, 412, 'B', ['B', 'A'], 'A note', 8, '2026-03-04', '', []),
+                         (set(fields['genre']['value']), fields['read']['value'], fields['pages']['value'], fields['shelf']['value'], fields['shelf']['values'],
+                          fields['notes']['value'], fields['stars']['value'], fields['when']['value'], fields['mood']['value'], fields['people']['value']))
+        for bad, text in [({'shelf': 'Z'}, 'can only be one of'), ({'pages': 'many'}, 'whole number'), ({'price': 'x'}, 'must be a number'), ({'nothing': 1}, 'not in this library')]:
+            self.assertIn(text, self.edit(book, {'custom': bad}, 400)['error'])
+        custom = {'genre': ['Space', 'Kids'], 'read': False, 'pages': 500, 'shelf': 'a', 'notes': 'New\nnote & more', 'stars': 6, 'when': '2020-05-06',
+                  'price': 9.75, 'cycle': {'value': 'Ring', 'index': 2.5}, 'mood': 'Calm', 'people': ['Le Guin, Ursula', 'Ann B']}
+        self.edit(book, {'custom': custom})
+        self.assertEqual(0, self.server.scan()['updated'])
+        shown = {c['key']: c['text'] for c in self.server.books()['First Book']['columns']}
+        self.assertEqual(('A', '9.75', 'Ring [2.5]', 'No', '★★★'), (shown['shelf'], shown['price'], shown['cycle'], shown['read'], shown['stars']))
+
+        library = self.download(root)
+        self.check(library)
+        expected = {'*genre': {'Space', 'Kids'}, '*read': False, '*pages': 500, '*shelf': 'A', '*stars': 6, '*price': 9.75, '*cycle': 'Ring', '*mood': 'Calm',
+                    '*people': {'Le Guin, Ursula', 'Ann B'}}
+        labels = [k[1:] for k in expected] + ['when', 'notes']
+        for restore in (False, True):
+            with self.subTest(restored=restore):
+                if restore:
+                    # Calibre can rebuild the database, custom columns included, from the metadata.opf files
+                    self.calibre.db(library, 'restore_database', '--really-do-it')
+                rows = self.calibre.list(library, *labels)
+                row = rows['First Book']
+                self.assertEqual(expected, {k: set(v) if isinstance(v, list) else v for k, v in row.items() if k in expected})
+                self.assertTrue(row['*when'].startswith('2020-05-06'), row['*when'])
+                self.assertIn('note &amp; more', row['*notes'])
+                self.assertEqual(2.5, self.series_index(library, 'cycle', row['id']))
+                self.assertEqual([], rows['Second Book']['*genre'])
+
+        book = self.server.books()['First Book']
+        self.edit(book, {'custom': {'genre': [], 'read': None, 'pages': None, 'shelf': '', 'notes': '', 'stars': 0, 'when': '', 'price': None,
+                                    'cycle': {'value': '', 'index': 1}, 'mood': '', 'people': []}})
+        self.assertEqual([], self.server.books()['First Book']['columns'])
+        library = self.download(root)
+        self.check(library)
+        row = self.calibre.list(library, *labels)['First Book']
+        self.assertEqual({}, {k: v for k, v in row.items() if k.startswith('*') and v not in (None, [], 'None', '')})
+        db = sqlite3.connect(os.path.join(library, 'metadata.db'))
+        self.assertEqual([], db.execute("SELECT value FROM custom_column_1").fetchall(), 'values nobody uses are removed')
+        db.close()
+
+    def test_rename(self):
+        root = self.upload()
+        self.assertEqual((2, 'Anne Autorin'), self.rename('author', 'Ann Author', 'Anne Autorin'))
+        # The new name is there already: the two become one, with the spelling that was there
+        self.assertEqual((1, 'Anne Autorin'), self.rename('author', 'Ben Writer', 'anne autorin'))
+        self.assertEqual((1, 'Fiction.Crime'), self.rename('subject', 'Humour', 'fiction.crime'))
+        self.rename('series', 'Saga', 'Sage')
+        self.rename('publisher', 'Pub & Co', 'Publisher')
+        self.rename('column-genre', 'SF', 'Science Fiction')
+        self.assertIn('cannot contain &', self.rename('author', 'Anne Autorin', 'A & B', 400)['error'])
+        self.assertIn('No book', self.rename('author', 'Nobody', 'Somebody', 400)['error'])
+        self.assertIn('No book', self.rename('column-shelf', 'B', 'C', 400)['error'])
+        self.assertEqual(0, self.server.scan()['updated'])
+
+        books = self.server.books()
+        first = books['First Book']
+        self.assertEqual((['Anne Autorin'], ['Fiction.Crime'], 'Sage', 'Publisher'), (first['authors'], first['subjects'], first['series'], first['publisher']))
+        self.assertEqual({'Anne Autorin'}, {a for b in books.values() for a in b['authors']})
+        self.assertTrue(all('/Anne Autorin/' in b['folder'] + '/' for b in books.values()), [b['folder'] for b in books.values()])
+
+        library = self.download(root)
+        self.check(library)
+        self.assertFalse(os.path.exists(os.path.join(library, 'Ann Author')))
+        self.assertFalse(os.path.exists(os.path.join(library, 'Ben Writer')))
+        for restore in (False, True):
+            with self.subTest(restored=restore):
+                if restore:
+                    self.calibre.db(library, 'restore_database', '--really-do-it')
+                rows = self.calibre.list(library, 'genre')
+                self.assertEqual({'Anne Autorin'}, {r['authors'] for r in rows.values()})
+                self.assertEqual({'Autorin, Anne'}, {r['author_sort'] for r in rows.values()})
+                row = rows['First Book']
+                self.assertEqual((['Fiction.Crime'], 'Sage', 2.0, 'Publisher', {'Science Fiction', 'Kids'}),
+                                 (row['tags'], row['series'], row['series_index'], row['publisher'], set(row['*genre'])))
+                for r in rows.values():
+                    for path in r['formats']:
+                        self.assertTrue(os.path.isfile(path), path)
 
     def test_takes_turns(self):
         root = self.upload()
