@@ -356,6 +356,34 @@ class CalibreDb {
         return $out;
     }
 
+    /**
+     * The custom columns that can be edited, as editable() gives them for a book without values.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function columnFields(): array {
+        $out = [];
+        foreach ($this->columns() as $c) {
+            if (!$c['editable']) {
+                continue;
+            }
+            $out[] = [
+                'label' => $c['label'],
+                'name' => $c['name'],
+                'type' => $c['type'],
+                'multiple' => $c['multiple'],
+                'names' => $c['names'],
+                'editable' => true,
+                'values' => array_values(array_filter(array_map('strval', array_keys($c['order'])), static fn (string $v): bool => $v !== '')),
+                'half' => (bool)($c['display']['allow_half_stars'] ?? false),
+                'formatted' => false,
+                'value' => $c['multiple'] ? [] : '',
+                'index' => null,
+            ];
+        }
+        return $out;
+    }
+
     /** @return array<string,int> */
     private function columnOrder(string $label): array {
         return $this->column($label)['order'] ?? [];
@@ -526,6 +554,93 @@ class CalibreDb {
             $this->setCustom($id, $column, FieldReader::column($column, $value));
         }
         $this->touch($id);
+    }
+
+    /**
+     * Changes several books at once, the way Calibre's bulk metadata editor does. Books that would
+     * end up as they were are left alone, and so are custom columns that this library does not have.
+     *
+     * @param list<int> $ids in the order in which they are numbered in a series
+     * @param array<string,mixed> $spec see FieldReader::bulk()
+     * @return list<int> the books that changed
+     */
+    public function bulk(array $ids, array $spec): array {
+        // label => [column, checked value, value as given]; checked once here, so that a wrong
+        // value stops before any book changes
+        $columns = ['custom' => [], 'custom_add' => [], 'custom_remove' => []];
+        foreach (array_keys($columns) as $key) {
+            foreach ($spec[$key] ?? [] as $label => $value) {
+                $column = $this->column((string)$label);
+                if ($column === null) {
+                    continue;
+                }
+                if (!$column['editable']) {
+                    throw new CalibreException('The column "' . $column['name'] . '" cannot be edited');
+                }
+                if ($key !== 'custom' && !$column['multiple']) {
+                    throw new CalibreException('Values can only be added to or removed from columns with several values, which "' . $column['name'] . '" is not');
+                }
+                $columns[$key][(string)$label] = [$column, FieldReader::column($column, $value), $value];
+            }
+        }
+        ['custom' => $set, 'custom_add' => $add, 'custom_remove' => $remove] = $columns;
+        $lower = static fn (array $list): array => array_map('mb_strtolower', $list);
+        $merge = static function (array $current, array $removed, array $added, bool $clear) use ($lower): array {
+            $out = $clear ? [] : array_values(array_filter($current, static fn (string $v): bool => !in_array(mb_strtolower($v), $lower($removed), true)));
+            foreach ($added as $value) {
+                if (!in_array(mb_strtolower($value), $lower($out), true)) {
+                    $out[] = $value;
+                }
+            }
+            return $out;
+        };
+        $number = $spec['series_start'] ?? null;
+        $changed = [];
+        foreach (array_values(array_unique($ids)) as $id) {
+            $old = $this->get($id);
+            if ($old === null) {
+                continue;
+            }
+            $fields = array_intersect_key($spec, array_flip(['authors', 'series', 'publisher', 'pubdate', 'languages', 'rating']));
+            if ($number !== null) {
+                $fields['series_index'] = $number;
+                $number = round($number + 1, 2);
+            }
+            if (isset($spec['tags_add']) || isset($spec['tags_remove']) || isset($spec['tags_clear'])) {
+                $fields['tags'] = $merge($old['tags'], $spec['tags_remove'] ?? [], $spec['tags_add'] ?? [], (bool)($spec['tags_clear'] ?? false));
+            }
+            $stored = array_column($old['columns'], null, 'label');
+            foreach ($set as $label => [$column, $checked, $value]) {
+                if ($column['type'] === 'series' && $checked['value'] !== '') {
+                    // Books keep their number, as with the series of the book
+                    $value = ['value' => $checked['value'], 'index' => $stored[$label]['extra'] ?? 1.0];
+                }
+                $fields['custom'][$label] = $value;
+            }
+            foreach (array_unique([...array_keys($add), ...array_keys($remove)]) as $label) {
+                if (array_key_exists($label, $set)) {
+                    continue;
+                }
+                $current = array_map('strval', (array)($stored[$label]['value'] ?? []));
+                $fields['custom'][$label] = $merge($current, $remove[$label][1] ?? [], $add[$label][1] ?? [], false);
+            }
+
+            $this->db->exec('SAVEPOINT book');
+            try {
+                $this->update($id, $fields);
+                $new = $this->get($id);
+                // The time stamps differ in any case
+                $same = static fn (?array $r): array => array_diff_key($r ?? [], array_flip(['rev', 'pubdate_utc']));
+                if ($same($new) === $same($old)) {
+                    $this->db->exec('ROLLBACK TO book');
+                } else {
+                    $changed[] = $id;
+                }
+            } finally {
+                $this->db->exec('RELEASE book');
+            }
+        }
+        return $changed;
     }
 
     /**

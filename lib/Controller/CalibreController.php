@@ -198,6 +198,142 @@ class CalibreController extends Controller {
         });
     }
 
+    /**
+     * What the form for changing several books needs: how many of them can be changed, the custom
+     * columns of their libraries and the names already used.
+     *
+     * @param list<int> $ids file ids from the book browser
+     */
+    #[NoAdminRequired]
+    public function bulkForm(array $ids = []): JSONResponse {
+        return $this->guard(function (string $uid) use ($ids): JSONResponse {
+            [$groups, $outside] = $this->group($uid, $ids);
+            $books = 0;
+            $columns = [];
+            $names = ['authors' => [], 'series' => [], 'tags' => [], 'publishers' => [], 'columns' => []];
+            $problems = [];
+            foreach ($groups as ['library' => $library, 'paths' => $paths]) {
+                $path = $this->calibre->relative($uid, $library);
+                try {
+                    $this->calibre->read($uid, $library, function (CalibreDb $db) use ($library, $paths, $path, &$books, &$columns, &$names, &$problems): void {
+                        $known = $db->filePaths();
+                        $ids = [];
+                        foreach ($paths as $file) {
+                            $id = $known[CalibreDb::pathKey($file)] ?? 0;
+                            if ($id > 0) {
+                                $ids[$id] = true;
+                            }
+                        }
+                        $reason = $this->calibre->readOnlyReason($library, $db);
+                        if ($reason !== '') {
+                            $problems[] = ['library' => $path, 'reason' => $reason];
+                            return;
+                        }
+                        $books += count($ids);
+                        foreach ($db->columnFields() as $column) {
+                            $columns[$column['label']] ??= $column;
+                        }
+                        foreach (['authors', 'series', 'tags', 'publishers'] as $kind) {
+                            $names[$kind] = [...$names[$kind], ...$db->names($kind)];
+                        }
+                        foreach ($db->customNames() as $label => $values) {
+                            $names['columns'][$label] = [...($names['columns'][$label] ?? []), ...$values];
+                        }
+                    });
+                } catch (CalibreException $e) {
+                    $problems[] = ['library' => $path, 'reason' => $e->getMessage()];
+                }
+            }
+            $unique = static fn (array $list): array => array_slice(array_values(array_unique($list)), 0, 5000);
+            $names = array_map($unique, array_diff_key($names, ['columns' => 0])) + ['columns' => array_map($unique, $names['columns'])];
+            return new JSONResponse([
+                'books' => $books,
+                'outside' => $outside,
+                'libraries' => array_map(fn (array $g): string => $this->calibre->relative($uid, $g['library']), array_values($groups)),
+                'problems' => $problems,
+                'columns' => array_values($columns),
+                'names' => $names,
+            ]);
+        });
+    }
+
+    /**
+     * Changes several books at once, in all the Calibre libraries they are in.
+     *
+     * @param list<int> $ids file ids from the book browser, in the order of numbering in a series
+     * @param array<string,mixed> $changes see FieldReader::bulk()
+     */
+    #[NoAdminRequired]
+    public function bulk(array $ids = [], array $changes = []): JSONResponse {
+        return $this->guard(function (string $uid) use ($ids, $changes): JSONResponse {
+            $spec = $this->fields->bulk($changes);
+            [$groups, $outside] = $this->group($uid, $ids);
+            $books = 0;
+            $unknown = 0;
+            $skipped = [];
+            foreach ($groups as ['library' => $library, 'paths' => $paths]) {
+                $path = $this->calibre->relative($uid, $library);
+                try {
+                    $result = $this->calibre->bulk($uid, $library, $paths, $spec);
+                } catch (CalibreException $e) {
+                    $skipped[] = ['library' => $path, 'reason' => $e->getMessage()];
+                    continue;
+                }
+                $books += count($result['books']);
+                $unknown += $result['unknown'];
+                try {
+                    $this->scanner->refreshCalibreBooks($uid, $library, $result['books']);
+                } catch (\Throwable $e) {
+                    $this->config->setLastScan($uid, 0);
+                    $this->logger->warning('OPDS: could not refresh the index: ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
+                }
+            }
+            if ($groups === []) {
+                throw new CalibreException('None of these books is in a Calibre library. Only books in Calibre libraries can be changed here');
+            }
+            if (count($skipped) === count($groups)) {
+                throw new CalibreException(end($skipped)['reason']);
+            }
+            return new JSONResponse(['books' => $books, 'unknown' => $unknown, 'outside' => $outside, 'skipped' => $skipped]);
+        });
+    }
+
+    /**
+     * The book files of the book browser, by Calibre library.
+     *
+     * @param list<mixed> $ids file ids
+     * @return array{0: array<int, array{library: Folder, paths: list<string>}>, 1: int} by library id, and how many books are not in a library
+     */
+    private function group(string $uid, array $ids): array {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
+        if ($ids === []) {
+            throw new CalibreException('Choose at least one book');
+        }
+        if (count($ids) > 5000) {
+            throw new CalibreException('At most 5000 books can be changed at once');
+        }
+        $userFolder = $this->rootFolder->getUserFolder($uid);
+        $groups = [];
+        $outside = 0;
+        foreach ($ids as $id) {
+            $file = null;
+            foreach ($this->repository->findByFileId($uid, $id) !== null ? $userFolder->getById($id) : [] as $node) {
+                if ($node instanceof File) {
+                    $file = $node;
+                    break;
+                }
+            }
+            $library = $file !== null ? $this->calibre->findFor($uid, $file) : null;
+            if ($file === null || $library === null) {
+                $outside++;
+                continue;
+            }
+            $groups[$library->getId()] ??= ['library' => $library, 'paths' => []];
+            $groups[$library->getId()]['paths'][] = $this->calibre->inLibrary($library, $file);
+        }
+        return [$groups, $outside];
+    }
+
     /** The kind of name in Calibre for a list of the book browser. */
     private function category(CalibreDb $db, string $kind): ?string {
         if (str_starts_with($kind, 'column-')) {

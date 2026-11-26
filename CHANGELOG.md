@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11.0 – unreleased
+
+* Calibre beta: several books can be changed at once. Choose them with *Select books to change*
+  above any list of books, then set the authors, series (numbered in the order shown, if you like),
+  publisher, date, languages, rating or custom columns, or add and remove tags and values of list
+  columns. Fields left empty stay as they are in each book.
+
 ## 1.10.0 – 2026-11-26
 
 * Calibre beta: books are downloaded under their title and first author as Calibre has them, in

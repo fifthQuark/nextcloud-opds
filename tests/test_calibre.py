@@ -253,6 +253,57 @@ class CalibreTest(unittest.TestCase):
                     for path in r['formats']:
                         self.assertTrue(os.path.isfile(path), path)
 
+    def test_bulk(self):
+        root = self.upload()
+        cards = {c['title']: c for c in self.server.api('/api/books')['books']}
+        self.assertTrue(all(c['inCalibre'] for c in cards.values()))
+        # In this order they are numbered in the series
+        ids = [cards[t]['id'] for t in ('Second Book', 'Third Book', 'First Book')]
+        form = self.server.api('/api/bulk/form', {'ids': ids + [999999]})
+        self.assertEqual((3, 1, []), (form['books'], form['outside'], form['problems']))
+        self.assertIn('Fiction.Crime', form['names']['tags'])
+        self.assertIn('SF', form['names']['columns']['genre'])
+        self.assertEqual(['B', 'A'], {c['label']: c for c in form['columns']}['shelf']['values'])
+
+        bulk = lambda changes, expect=200: self.server.api('/api/bulk', {'ids': ids, 'changes': changes}, expect=expect)
+        for bad, text in [({}, 'Nothing to change'), ({'custom_add': {'shelf': ['A']}}, 'several values'), ({'series_start': 1}, 'series that is set'),
+                          ({'custom': {'shelf': 'Z'}}, 'can only be one of'), ({'tags_add': [' ']}, 'Nothing to change')]:
+            self.assertIn(text, bulk(bad, 400)['error'])
+        self.assertIn('Choose at least one', self.server.api('/api/bulk', {'ids': [], 'changes': {'rating': 2}}, expect=400)['error'])
+
+        answer = bulk({'authors': ['Carla Neu'], 'series': 'Trilogy', 'series_start': 1, 'tags_add': ['Bulk', 'humour'], 'tags_remove': ['fiction.crime'],
+                       'publisher': 'Same Pub', 'rating': 8, 'custom': {'shelf': 'a', 'cycle': 'Ring', 'mood': 'Calm', 'nothing': 'x'},
+                       'custom_add': {'genre': ['New'], 'people': ['X & Y']}, 'custom_remove': {'genre': ['kids']}})
+        self.assertEqual((3, 0, 0, []), (answer['books'], answer['unknown'], answer['outside'], answer['skipped']))
+        # Nothing to do: the books stay as they are
+        self.assertEqual(0, bulk({'tags_add': ['bulk'], 'publisher': 'Same Pub'})['books'])
+        self.assertEqual(0, self.server.scan()['updated'])
+        books = self.server.books()
+        self.assertEqual({('Carla Neu',)}, {tuple(b['authors']) for b in books.values()})
+        self.assertEqual({'First Book': 3, 'Second Book': 1, 'Third Book': 2}, {t: b['seriesIndex'] for t, b in books.items()})
+        self.assertEqual({8}, {b['rating'] for b in books.values()})
+
+        library = self.download(root)
+        self.check(library)
+        for name in ('Ann Author', 'Ben Writer'):
+            self.assertFalse(os.path.exists(os.path.join(library, name)), name)
+        for restore in (False, True):
+            with self.subTest(restored=restore):
+                if restore:
+                    self.calibre.db(library, 'restore_database', '--really-do-it')
+                rows = self.calibre.list(library, 'genre', 'shelf', 'cycle', 'mood', 'people')
+                self.assertEqual({('Carla Neu', 'Neu, Carla', 'Trilogy', 'Same Pub', 'A', 'Ring', 'Calm')},
+                                 {(r['authors'], r['author_sort'], r['series'], r['publisher'], r['*shelf'], r['*cycle'], r['*mood']) for r in rows.values()})
+                self.assertEqual({'First Book': 3.0, 'Second Book': 1.0, 'Third Book': 2.0}, {t: r['series_index'] for t, r in rows.items()})
+                self.assertEqual({'First Book': {'Humour', 'Bulk'}, 'Second Book': {'Humour', 'Bulk'}, 'Third Book': {'Humour', 'Bulk'}},
+                                 {t: set(r['tags']) for t, r in rows.items()})
+                self.assertEqual({'First Book': {'SF', 'New'}, 'Second Book': {'New'}, 'Third Book': {'New'}}, {t: set(r['*genre']) for t, r in rows.items()})
+                self.assertEqual({('X + Y',)}, {tuple(r['*people']) for r in rows.values()})
+                for r in rows.values():
+                    self.assertEqual(8, r['rating'])
+                    for path in r['formats']:
+                        self.assertTrue(os.path.isfile(path), path)
+
     def test_takes_turns(self):
         root = self.upload()
         self.edit(self.server.books()['Second Book'], {'title': 'Changed here', 'tags': ['x']})

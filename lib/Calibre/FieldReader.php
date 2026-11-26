@@ -81,6 +81,56 @@ class FieldReader {
     }
 
     /**
+     * Changes for several books at once. Absent keys stay unchanged in every book.
+     *
+     * @param array<string,mixed> $in authors, series, series_start, publisher, pubdate, languages, rating,
+     *     tags_add, tags_remove, tags_clear, custom (label => value), custom_add and custom_remove (label => list)
+     * @return array<string,mixed> for CalibreDb::bulk()
+     */
+    public function bulk(array $in): array {
+        $out = array_intersect_key($this->read(array_intersect_key($in, array_flip(['authors', 'series', 'publisher', 'pubdate', 'languages', 'rating']))), $in);
+        if (array_key_exists('authors', $out) && $this->list($in['authors'], 100) === []) {
+            // Books always have an author, so no authors means no change
+            unset($out['authors']);
+        }
+        if (array_key_exists('series_start', $in) && $in['series_start'] !== null && $in['series_start'] !== '') {
+            if (($out['series'] ?? '') === '') {
+                throw new CalibreException('Books can only be numbered in a series that is set at the same time');
+            }
+            if (!is_numeric($in['series_start']) || abs((float)$in['series_start']) > 1_000_000) {
+                throw new CalibreException('The first number in the series must be a number');
+            }
+            $out['series_start'] = round((float)$in['series_start'], 2);
+        }
+        foreach (['tags_add', 'tags_remove'] as $key) {
+            if (array_key_exists($key, $in)) {
+                $tags = $this->read(['tags' => $in[$key]])['tags'];
+                if ($tags !== []) {
+                    $out[$key] = $tags;
+                }
+            }
+        }
+        if (($in['tags_clear'] ?? false) === true) {
+            $out['tags_clear'] = true;
+        }
+        if (array_key_exists('custom', $in) && is_array($in['custom']) && $in['custom'] !== []) {
+            $out['custom'] = array_slice($in['custom'], 0, 200, true);
+        }
+        foreach (['custom_add', 'custom_remove'] as $key) {
+            foreach (is_array($in[$key] ?? null) ? array_slice($in[$key], 0, 200, true) : [] as $label => $values) {
+                $values = $this->list($values, 500);
+                if ($values !== []) {
+                    $out[$key][(string)$label] = $values;
+                }
+            }
+        }
+        if ($out === []) {
+            throw new CalibreException('Nothing to change. Fill in at least one field');
+        }
+        return $out;
+    }
+
+    /**
      * A value for a custom column of Calibre.
      *
      * @param array{type: string, name: string, multiple: bool, names: bool, display: array<string,mixed>, order: array<string,int>} $column

@@ -255,6 +255,44 @@ class CalibreLibrary {
     }
 
     /**
+     * Changes several books of the library at once, and the folders of those whose authors change.
+     *
+     * @param list<string> $paths book files, relative to the library, in the order of numbering in a series
+     * @param array<string,mixed> $spec see FieldReader::bulk()
+     * @return array{books: list<int>, unknown: int} the books that changed, and how many files Calibre does not know
+     */
+    public function bulk(string $uid, Folder $library, array $paths, array $spec): array {
+        return $this->change($uid, $library, function (CalibreDb $db, array &$undo) use ($library, $paths, $spec): array {
+            $known = $db->filePaths();
+            $ids = [];
+            $unknown = 0;
+            foreach ($paths as $path) {
+                $id = $known[CalibreDb::pathKey($path)] ?? 0;
+                if ($id > 0) {
+                    // Several formats of one book are one book
+                    $ids[$id] ??= $id;
+                } else {
+                    $unknown++;
+                }
+            }
+            $books = $db->transaction(function () use ($db, $library, $ids, $spec, &$undo): array {
+                $before = [];
+                foreach (isset($spec['authors']) ? $ids : [] as $id) {
+                    $before[$id] = $this->record($db, $id)['authors'][0] ?? '';
+                }
+                $books = $db->bulk(array_values($ids), $spec);
+                foreach ($books as $id) {
+                    if (isset($before[$id]) && $before[$id] !== ($this->record($db, $id)['authors'][0] ?? '')) {
+                        $this->relocate($db, $library, $id, $undo);
+                    }
+                }
+                return $books;
+            });
+            return ['books' => $books, 'unknown' => $unknown];
+        }, true);
+    }
+
+    /**
      * @param string|null $data image of any supported type, null removes the cover
      * @return array<string,mixed> the record afterwards
      */

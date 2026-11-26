@@ -363,6 +363,9 @@
             content.prepend(rename);
         }
         const grid = el('ul', { class: 'ol-grid' });
+        if (state.calibre) {
+            content.append(selectBar(grid));
+        }
         content.append(grid);
         list = { params: { ...filters, sort: params.sort, order: params.order }, page: 0, pages: 1, grid, busy: false };
         list.more = () => loadPage(mine);
@@ -509,7 +512,21 @@
 
     function card(book) {
         const sub = seriesText(book);
-        return el('li', { 'data-id': book.id }, el('a', { class: 'ol-card', href: openLink(book.id), onclick: (e) => {
+        const pick = state.calibre ? el('input', {
+            type: 'checkbox', class: 'ol-pick', value: book.id, disabled: !book.inCalibre,
+            'aria-label': 'Select ' + book.title, title: book.inCalibre ? null : 'Not in a Calibre library',
+        }) : null;
+        return el('li', { 'data-id': book.id }, pick, el('a', { class: 'ol-card', href: openLink(book.id), onclick: (e) => {
+            const grid = e.currentTarget.closest('.ol-grid');
+            if (pick && grid && grid.classList.contains('ol-selecting')) {
+                // Choosing books instead of opening them
+                e.preventDefault();
+                if (!pick.disabled) {
+                    pick.checked = !pick.checked;
+                    pick.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return;
+            }
             // The list may have been sorted or filtered since the card was made
             e.currentTarget.href = openLink(book.id);
         } },
@@ -517,6 +534,281 @@
             el('span', { class: 'ol-card-title' }, book.title),
             book.authors.length ? el('span', { class: 'ol-sub' }, book.authors.join(', ')) : null,
             sub ? el('span', { class: 'ol-sub ol-series' }, sub) : null));
+    }
+
+    // ------------------------------------------------------- several books
+
+    /** Choosing books of the list to change them together */
+    function selectBar(grid) {
+        const bar = el('div', { class: 'ol-select' });
+        const count = el('span', { class: 'ol-select-count', role: 'status' });
+        const picked = () => [...grid.querySelectorAll('.ol-pick:checked')].map((i) => Number(i.value));
+        const edit = el('button', { type: 'button', class: 'primary', onclick: () => drawBulk(picked()) }, 'Change…');
+        const update = () => {
+            const n = picked().length;
+            count.textContent = n ? plural(n, 'book') + ' selected' : 'Click books to select them';
+            edit.disabled = n === 0;
+        };
+        const stop = () => {
+            grid.classList.remove('ol-selecting');
+            for (const box of grid.querySelectorAll('.ol-pick:checked')) {
+                box.checked = false;
+            }
+            bar.replaceChildren(start, el('span', { class: 'ol-beta' }, 'Beta'));
+        };
+        const start = el('button', { type: 'button', onclick: () => {
+            grid.classList.add('ol-selecting');
+            update();
+            bar.replaceChildren(count,
+                el('button', { type: 'button', onclick: () => {
+                    for (const box of grid.querySelectorAll('.ol-pick:not(:disabled)')) {
+                        box.checked = true;
+                    }
+                    update();
+                } }, 'Select all shown'),
+                edit,
+                el('button', { type: 'button', onclick: stop }, 'Done'));
+            edit.focus();
+        } }, 'Select books to change…');
+        grid.addEventListener('change', update);
+        stop();
+        return bar;
+    }
+
+    /** One form for several books; what is left empty stays as it is in each book */
+    async function drawBulk(ids) {
+        dialog.replaceChildren(el('p', { class: 'ol-message', id: 'ol-dialog-title' }, 'Loading…'));
+        if (!dialog.open) {
+            dialog.showModal();
+        }
+        let form;
+        try {
+            form = await api('POST', '/api/bulk/form', { ids });
+        } catch (e) {
+            dialog.replaceChildren(closeButton(), el('p', { class: 'ol-message ol-error', id: 'ol-dialog-title' }, e.message));
+            return;
+        }
+        const problems = [
+            ...(form.outside ? [plural(form.outside, 'book') + ' not in a Calibre library'] : []),
+            ...form.problems.map((p) => p.library + ': ' + p.reason),
+        ];
+        if (form.books === 0) {
+            dialog.replaceChildren(closeButton(), el('div', { class: 'ol-message', id: 'ol-dialog-title' },
+                el('p', null, 'None of these books can be changed.'), problems.map((p) => el('p', { class: 'ol-sub' }, p))));
+            return;
+        }
+        const text = (props) => el('input', { type: 'text', autocomplete: 'off', ...props });
+        const check = (label) => {
+            const box = el('input', { type: 'checkbox' });
+            return { box, node: el('label', { class: 'ol-check' }, box, ' ' + label) };
+        };
+        const keep = '\u0000';
+        const choice = (options) => el('select', null, el('option', { value: keep }, 'Don’t change'), options.map(([v, label]) => el('option', { value: v }, label)));
+        // A field with a box that empties it in every book
+        const clearable = (input, label) => {
+            const c = check(label);
+            c.box.addEventListener('change', () => {
+                input.disabled = c.box.checked;
+            });
+            return { input, clear: c.box, extra: c.node };
+        };
+        const ratings = (half) => (half ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [2, 4, 6, 8, 10]).map((n) => [String(n), stars(n) + ' (' + n / 2 + ' of 5)']);
+
+        const inputs = {
+            authors: text(),
+            series: clearable(text(), 'Remove the series'),
+            number: check('Number the books in the order shown, starting at'),
+            start: el('input', { type: 'number', step: '0.01', value: 1, class: 'ol-start', 'aria-label': 'First number' }),
+            tagsAdd: text(),
+            tagsRemove: text(),
+            tagsClear: check('Remove all tags first'),
+            publisher: clearable(text(), 'Remove the publisher'),
+            pubdate: clearable(el('input', { type: 'date' }), 'Remove the date'),
+            languages: clearable(text(), 'Remove the languages'),
+            rating: choice([['0', 'No rating'], ...ratings(true)]),
+        };
+        inputs.tagsClear.box.addEventListener('change', () => {
+            inputs.tagsRemove.disabled = inputs.tagsClear.box.checked;
+        });
+
+        // label => how to read the column; null when it is left alone
+        const columns = form.columns.map((f) => {
+            switch (f.type) {
+            case 'text':
+                if (f.multiple) {
+                    const split = f.names ? splitAuthors : splitTags;
+                    const add = text();
+                    const remove = text();
+                    return { f, nodes: [field('c-' + f.label, f.name + ': add', add, f.names ? 'Separate several with &' : 'Separate with commas'),
+                        field('c-' + f.label + '-remove', f.name + ': remove', remove)],
+                    suggest: [add, remove], read: (out) => {
+                        if (split(add.value).length) {
+                            out.custom_add[f.label] = split(add.value);
+                        }
+                        if (split(remove.value).length) {
+                            out.custom_remove[f.label] = split(remove.value);
+                        }
+                    } };
+                }
+                // falls through
+            case 'series':
+            case 'comments':
+            case 'datetime':
+            case 'int':
+            case 'float': {
+                const input = f.type === 'comments' ? el('textarea', { rows: 3 })
+                    : f.type === 'datetime' ? el('input', { type: 'date' })
+                        : f.type === 'int' || f.type === 'float' ? el('input', { type: 'number', step: f.type === 'int' ? '1' : 'any' }) : text();
+                const c = clearable(input, 'Remove from every book');
+                return { f, nodes: [field('c-' + f.label, f.name, input, f.type === 'series' ? 'The books keep their numbers' : null), c.extra],
+                    suggest: ['text', 'series'].includes(f.type) ? [input] : [], read: (out) => {
+                        if (c.clear.checked) {
+                            out.custom[f.label] = f.type === 'int' || f.type === 'float' ? null : '';
+                        } else if (input.value.trim() !== '') {
+                            out.custom[f.label] = f.type === 'int' || f.type === 'float' ? Number(input.value) : input.value;
+                        }
+                    } };
+            }
+            case 'enumeration':
+            case 'bool':
+            case 'rating': {
+                const input = choice(f.type === 'enumeration' ? [['', '— (none)'], ...f.values.map((v) => [v, v])]
+                    : f.type === 'bool' ? [['', '— (none)'], ['yes', 'Yes'], ['no', 'No']]
+                        : [['0', 'No rating'], ...ratings(f.half)]);
+                return { f, nodes: [field('c-' + f.label, f.name, input)], suggest: [], read: (out) => {
+                    if (input.value !== keep) {
+                        out.custom[f.label] = f.type === 'bool' ? (input.value === '' ? null : input.value === 'yes')
+                            : f.type === 'rating' ? Number(input.value) : input.value;
+                    }
+                } };
+            }
+            default:
+                return null;
+            }
+        }).filter(Boolean);
+
+        const lists = el('div', { hidden: true },
+            suggest(inputs.authors, 'ol-b-authors', form.names.authors, '&'),
+            suggest(inputs.series.input, 'ol-b-series', form.names.series),
+            suggest(inputs.tagsAdd, 'ol-b-tags', form.names.tags, ','),
+            suggest(inputs.tagsRemove, 'ol-b-tags-r', form.names.tags, ','),
+            suggest(inputs.publisher.input, 'ol-b-publishers', form.names.publishers),
+            suggest(inputs.languages.input, 'ol-b-languages', state.languages, ','),
+            columns.flatMap((x) => x.suggest.map((input, i) => suggest(input, 'ol-b-c-' + x.f.label + '-' + i, form.names.columns[x.f.label] || [],
+                x.f.multiple ? (x.f.names ? '&' : ',') : null))));
+
+        const read = () => {
+            const out = { custom: {}, custom_add: {}, custom_remove: {} };
+            const value = (c) => (c.clear.checked ? '' : c.input.value.trim() || null);
+            if (splitAuthors(inputs.authors.value).length) {
+                out.authors = splitAuthors(inputs.authors.value);
+            }
+            for (const key of ['series', 'publisher', 'pubdate']) {
+                if (value(inputs[key]) !== null) {
+                    out[key] = value(inputs[key]);
+                }
+            }
+            if (inputs.number.box.checked) {
+                if (!out.series) {
+                    throw new Error('Fill in the series in which the books are numbered.');
+                }
+                out.series_start = Number(inputs.start.value || 1);
+            }
+            if (value(inputs.languages) !== null) {
+                out.languages = splitTags(value(inputs.languages));
+            }
+            if (inputs.tagsClear.box.checked) {
+                out.tags_clear = true;
+            } else if (splitTags(inputs.tagsRemove.value).length) {
+                out.tags_remove = splitTags(inputs.tagsRemove.value);
+            }
+            if (splitTags(inputs.tagsAdd.value).length) {
+                out.tags_add = splitTags(inputs.tagsAdd.value);
+            }
+            if (inputs.rating.value !== keep) {
+                out.rating = Number(inputs.rating.value);
+            }
+            for (const x of columns) {
+                x.read(out);
+            }
+            for (const key of ['custom', 'custom_add', 'custom_remove']) {
+                if (!Object.keys(out[key]).length) {
+                    delete out[key];
+                }
+            }
+            return out;
+        };
+
+        const status = el('p', { class: 'ol-status', role: 'status' });
+        const save = el('button', { type: 'submit', class: 'primary' }, 'Change ' + plural(form.books, 'book'));
+        const cancel = el('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel');
+        const dirty = () => {
+            try {
+                return Object.keys(read()).length > 0;
+            } catch (e) {
+                return true;
+            }
+        };
+        dialog.dataset.editing = '1';
+        dialog.mayLeave = () => !dirty() || window.confirm('Discard your changes?');
+
+        const body = el('form', { class: 'ol-bulk ol-edit', onsubmit: async (e) => {
+            e.preventDefault();
+            let changes;
+            try {
+                changes = read();
+                if (!Object.keys(changes).length) {
+                    throw new Error('Fill in at least one field.');
+                }
+            } catch (problem) {
+                status.textContent = problem.message;
+                status.className = 'ol-status ol-error';
+                return;
+            }
+            save.disabled = cancel.disabled = true;
+            status.className = 'ol-status';
+            status.textContent = 'Saving…';
+            try {
+                const data = await api('POST', '/api/bulk', { ids, changes });
+                const parts = [data.books ? 'Changed ' + plural(data.books, 'book') + '.' : 'Nothing needed to change.'];
+                if (data.outside || data.unknown) {
+                    parts.push(plural(data.outside + data.unknown, 'book') + ' left alone because Calibre does not know them.');
+                }
+                for (const s of data.skipped) {
+                    parts.push('Not in ' + s.library + ': ' + s.reason + '.');
+                }
+                stopEditing();
+                notice = parts.join(' ');
+                shownList = null;
+                dialog.close();
+                route();
+            } catch (problem) {
+                status.textContent = problem.message;
+                status.className = 'ol-status ol-error';
+                save.disabled = cancel.disabled = false;
+            }
+        } },
+            el('h3', { id: 'ol-dialog-title' }, 'Change ' + plural(form.books, 'book') + ' ', el('span', { class: 'ol-beta' }, 'Beta')),
+            el('p', { class: 'ol-sub' }, 'Fields left empty stay as they are in each book.'),
+            problems.length ? el('p', { class: 'ol-sub' }, 'Left alone: ' + problems.join('; ') + '.') : null,
+            field('authors', 'Authors', inputs.authors, 'Replaces the authors of every book. Separate several with &'),
+            field('series', 'Series', inputs.series.input), inputs.series.extra,
+            el('div', { class: 'ol-numbering' }, inputs.number.node, inputs.start),
+            el('div', { class: 'ol-pair ol-pair-even' }, field('tags-add', 'Add tags', inputs.tagsAdd, 'Separate with commas'), field('tags-remove', 'Remove tags', inputs.tagsRemove)),
+            inputs.tagsClear.node,
+            el('div', { class: 'ol-pair ol-pair-even' },
+                el('div', null, field('publisher', 'Publisher', inputs.publisher.input), inputs.publisher.extra),
+                el('div', null, field('pubdate', 'Published', inputs.pubdate.input), inputs.pubdate.extra)),
+            el('div', { class: 'ol-pair ol-pair-even' },
+                el('div', null, field('languages', 'Languages', inputs.languages.input), inputs.languages.extra),
+                field('rating', 'Rating', inputs.rating)),
+            columns.length ? el('details', { open: true, class: 'ol-columns' }, el('summary', null, 'Columns'), columns.map((x) => el('div', { class: 'ol-bulk-column' }, x.nodes))) : null,
+            el('p', { class: 'ol-sub' }, 'Changes metadata.db in ' + form.libraries.join(', ') + '. Books whose first author changes get new folders, as in Calibre. Close Calibre before saving.'),
+            status,
+            el('div', { class: 'ol-actions' }, save, cancel),
+            lists);
+        dialog.replaceChildren(closeButton(), body);
+        inputs.authors.focus();
     }
 
     function setSort(sort, order) {

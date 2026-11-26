@@ -166,6 +166,11 @@ the library folder:
   in the library folder, as Calibre's tag browser does: if the new name is used already, the two
   become one with the spelling that was there, and the folders of the books move along when an
   author is renamed. Books outside Calibre libraries keep their name.
+* **Several books at once:** *Select books to change* above a list of books lets you pick books
+  (or all that are shown) and change them together, as with Calibre's bulk metadata editor: set the
+  authors, series (optionally numbered in the order shown), publisher, date, languages, rating and
+  custom columns, add and remove tags and values of list columns. Fields left empty stay as they are;
+  books that end up as they were are not touched. The books can be in several Calibre libraries.
 * **Current folder:** *Convert the current folder* turns the library folder itself into a Calibre
   library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
   inside it. Nothing is copied, reader links keep working, and folders that become empty are

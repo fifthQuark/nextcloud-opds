@@ -226,6 +226,8 @@ class LibraryController extends Controller {
             'series' => $main->series,
             'seriesIndex' => $main->seriesIndex,
             'year' => $main->pubyear,
+            // Read from a Calibre library
+            'inCalibre' => $main->metaRev !== '',
             'thumb' => $cover !== null ? $this->coverUrl($cover, 'thumbnail') : '',
             'cover' => $cover !== null ? $this->coverUrl($cover, 'cover') : '',
             'formats' => array_map(fn (Book $b): array => [
