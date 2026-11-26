@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+import urllib.parse
 import uuid
 
 from calibre import Calibre
@@ -280,11 +281,11 @@ class CalibreTest(unittest.TestCase):
         self.upload()
         book = self.server.books()['Third Book']
         _, plain, _ = self.server.request('/download/%d/x.epub' % book['id'])
-        stored = book['folder'] + '/' + book['formats'][0]['name']
+        stored = book['folder'] + '/' + book['formats'][0]['file']
         self.assertEqual(self.server.md5(stored), hashlib.md5(plain).hexdigest(), 'a book nobody has edited is sent as it is')
         self.edit(book, EDIT)
         book = self.server.books()[EDIT['title']]
-        stored = book['folder'] + '/' + book['formats'][0]['name']
+        stored = book['folder'] + '/' + book['formats'][0]['file']
         self.assertEqual(self.server.md5(stored), hashlib.md5(plain).hexdigest(), 'the stored file is not changed')
         _, copy, _ = self.server.request('/download/%d/x.epub' % book['id'])
         self.assertEqual(copy, self.server.request('/download/%d/x.epub' % book['id'])[1])
@@ -297,6 +298,22 @@ class CalibreTest(unittest.TestCase):
         series, number = meta['Series'].rsplit(' #', 1)
         self.assertEqual(('Neue Reihe', 4.5, 'Verlag', 'Alpha, Beta & Co', 'deu, eng', {'goodreads:99', 'isbn:9783161484100'}),
                          (series, float(number), meta['Publisher'], meta['Tags'], meta['Languages'], set(meta['Identifiers'].split(', '))))
+
+    def test_download_names(self):
+        root = self.upload()
+        self.edit(self.server.books()['Second Book'], {'title': 'סיפור על אהבה: וחושך', 'authors': ['עמוס עוז']})
+        book = self.server.books()['סיפור על אהבה: וחושך']
+        wanted = 'סיפור על אהבה_ וחושך - עמוס עוז.epub'
+        self.assertEqual(wanted, book['formats'][0]['name'])
+        # Calibre names the stored file in Latin letters
+        self.assertTrue(book['formats'][0]['file'].isascii(), book['formats'][0]['file'])
+        self.assertIn(urllib.parse.quote(wanted, safe=''), book['formats'][0]['url'])
+        status, _, headers = self.server.request('/download/%d/x' % book['id'])
+        self.assertEqual(200, status)
+        self.assertIn("filename*=UTF-8''" + urllib.parse.quote(wanted, safe=''), headers['Content-Disposition'])
+        _, feed, _ = self.server.request('/books?q=' + urllib.parse.quote('עוז'))
+        self.assertIn(urllib.parse.quote(wanted, safe=''), feed.decode())
+        self.check(self.download(root))
 
     def test_convert_and_copy(self):
         loose = self.dir('loose-' + uuid.uuid4().hex[:8])

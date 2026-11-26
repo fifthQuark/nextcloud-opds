@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0 – unreleased
+
+* Calibre beta: books are downloaded under their title and first author as Calibre has them, in
+  Hebrew, Cyrillic, Greek and every other script. Calibre names the stored files in Latin letters
+  only, so a Hebrew book used to arrive as something like `` sypvr `l hbh vkhvshk - `mvs `vz.epub ``.
+
 ## 1.9.0 – 2026-11-26
 
 * Calibre beta: custom columns can be edited together with the other fields of a book: text, lists,

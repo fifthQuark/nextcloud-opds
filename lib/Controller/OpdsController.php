@@ -505,7 +505,7 @@ class OpdsController extends Controller {
         $response = new StreamResponse($handle);
         $response->addHeader('Content-Type', FeedBuilder::mimeForFormat($book->format, $file->getMimeType()));
         $response->addHeader('Content-Length', (string)($copy['size'] ?? $file->getSize()));
-        $response->addHeader('Content-Disposition', $this->contentDisposition($file->getName()));
+        $response->addHeader('Content-Disposition', $this->contentDisposition($book->downloadName()));
         $response->addHeader('X-Content-Type-Options', 'nosniff');
         $response->setETag($copy['etag'] ?? $file->getEtag());
         $response->cacheFor($this->copies->applies($uid, $book) ? 0 : 3600);
@@ -638,7 +638,7 @@ class OpdsController extends Controller {
             'book' => $book,
             'files' => array_map(fn (Book $b): array => [
                 'book' => $b,
-                'href' => $this->feeds->route('download', ['id' => $b->fileId, 'name' => $b->name !== '' ? $b->name : 'book.' . $b->format]),
+                'href' => $this->feeds->route('download', ['id' => $b->fileId, 'name' => $b->downloadName()]),
             ], $books),
             'cover' => $cover->hasCover ? $this->feeds->route('cover', ['id' => $cover->fileId]) . '?v=' . $cover->coverVersion() : '',
             'thumbnail' => $cover->hasCover ? $this->feeds->route('thumbnail', ['id' => $cover->fileId]) . '?v=' . $cover->coverVersion() : '',

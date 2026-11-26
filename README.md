@@ -149,6 +149,9 @@ the library folder:
   copy-protected books, and files whose package document cannot be changed safely. Custom columns
   are not written. Turn it off with *Put the metadata and cover from Calibre into EPUBs*; an app that
   recognises a book by its file sees a new book after an edit.
+  Every format of a book is downloaded as `Title - Author.ext` with the title and first author from
+  Calibre, also in other scripts: Calibre itself names the stored files in Latin letters only
+  (`` sypvr `l hbh vkhvshk - `mvs `vz.epub ``).
 * **Files:** the formats of a book are those listed in Calibre. Other files in its folder, such as
   those in `data`, are not books of their own and left out.
 * **Editing:** a book gets an *Edit* button for title, authors, series, tags, publisher, date,

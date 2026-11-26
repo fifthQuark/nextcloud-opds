@@ -133,6 +133,28 @@ class Book {
         return substr(sha1($this->etag . '/' . $this->metaRev), 0, 10);
     }
 
+    /**
+     * Name under which the file is downloaded. Calibre keeps titles and authors in other scripts only
+     * in its database and names files in Latin letters ("sypvr `l hbh"), so its books get "Title - Author"
+     * from the record. Other files keep their own name.
+     */
+    public function downloadName(): string {
+        if ($this->metaRev === '' || $this->title === '') {
+            return $this->name !== '' ? $this->name : 'book.' . $this->format;
+        }
+        $lower = strtolower($this->name);
+        $extension = str_ends_with($lower, '.kepub.epub') ? '.kepub.epub'
+            : (str_contains($this->name, '.') ? '.' . pathinfo($this->name, PATHINFO_EXTENSION) : '.' . $this->format);
+        $name = $this->title . (isset($this->authors[0]) ? ' - ' . $this->authors[0] : '');
+        // What is not allowed in file names on Windows, Android and e-readers
+        $name = preg_replace('/[\x00-\x1F\x7F\/\\\\:*?"<>|]+/u', '_', $name) ?? '';
+        $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '');
+        // Most file systems allow 255 bytes; letters of other scripts take two to four
+        $name = mb_strcut($name, 0, 200 - strlen($extension), 'UTF-8');
+        $name = rtrim($name, ' .');
+        return $name !== '' ? $name . $extension : $this->name;
+    }
+
     public function authorString(): string {
         return implode(', ', $this->authors);
     }

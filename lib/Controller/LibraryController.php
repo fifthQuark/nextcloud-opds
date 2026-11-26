@@ -232,8 +232,9 @@ class LibraryController extends Controller {
                 'id' => $b->fileId,
                 'format' => str_ends_with(strtolower($b->name), '.kepub.epub') ? 'kepub' : $b->format,
                 'size' => $b->size,
-                'name' => $b->name,
-                'url' => $this->urls->linkToRoute('opds.opds.download', ['id' => $b->fileId, 'name' => $b->name]),
+                'name' => $b->downloadName(),
+                'file' => $b->name,
+                'url' => $this->urls->linkToRoute('opds.opds.download', ['id' => $b->fileId, 'name' => $b->downloadName()]),
             ], $books),
         ];
     }
