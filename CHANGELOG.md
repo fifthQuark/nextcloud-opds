@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.10.0 – unreleased
+## 1.10.0 – 2026-11-26
 
 * Calibre beta: books are downloaded under their title and first author as Calibre has them, in
   Hebrew, Cyrillic, Greek and every other script. Calibre names the stored files in Latin letters
