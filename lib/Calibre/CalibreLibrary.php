@@ -32,6 +32,8 @@ class CalibreLibrary {
     public const DB = 'metadata.db';
     private const COVER = 'cover.jpg';
     public const OPF = 'metadata.opf';
+    /** What happens to a file whose book is in the library already, see addFile() */
+    public const DUPLICATES = ['format', 'new', 'skip'];
     private const MAX_DB_SIZE = 512 * 1024 * 1024;
     /** A new backup is made when the newest one is older than this (seconds) */
     private const BACKUP_INTERVAL = 3600;
@@ -304,6 +306,82 @@ class CalibreLibrary {
             $this->writeFile($folder, self::COVER, $jpeg, $undo);
             return $this->record($db, $id);
         }, $id);
+    }
+
+    /**
+     * Adds a file that is not part of the library yet, as a new book or as another format of the
+     * book with the same title and first author, as Calibre does when it adds books.
+     *
+     * @param string $path local file, such as an upload
+     * @param string $name its name for the user, which gives the format
+     * @param array{fields: array<string,mixed>, cover: ?string} $book what was read from the file
+     * @param string $duplicates when the book is there already: "format" adds the file to it unless it
+     *     has this format, "new" adds a separate book, "skip" leaves the file out
+     * @return array{books: list<int>, result: string, id: int, title: string, file: ?File}
+     *     result: "added", "format" (added to the book that was there), "exists" (it has this format), "skipped"
+     */
+    public function addFile(string $uid, Folder $library, string $path, string $name, array $book, string $duplicates): array {
+        $format = $this->formatOf($name);
+        return $this->change($uid, $library, function (CalibreDb $db, array &$undo) use ($library, $path, $format, $book, $duplicates): array {
+            $fields = $book['fields'];
+            $author = $fields['authors'][0] ?? 'Unknown';
+            $same = $duplicates !== 'new' ? $db->findSame($fields['title'], $author) : 0;
+            if ($same > 0) {
+                $record = $this->record($db, $same);
+                if ($duplicates === 'skip' || isset($record['formats'][$format])) {
+                    return ['books' => [], 'result' => $duplicates === 'skip' ? 'skipped' : 'exists', 'id' => $same, 'title' => $record['title'], 'file' => null];
+                }
+                $file = $db->transaction(fn (): File => $this->putFile($db, $library, $same, $format, $path, $undo));
+                return ['books' => [$same], 'result' => 'format', 'id' => $same, 'title' => $record['title'], 'file' => $file];
+            }
+            [$id, $file] = $db->transaction(function () use ($db, $library, $path, $format, $book, $fields, $author, &$undo): array {
+                $id = $db->add($fields);
+                $dir = $this->adoptAuthorFolder($library, Naming::bookPath($id, $fields['title'], $author));
+                if ($library->nodeExists($dir)) {
+                    throw new CalibreException('There already is a folder "' . $dir . '" in the library. Rename or remove it first');
+                }
+                $folder = $this->makeFolders($library, $dir, $undo);
+                $db->setFiles($id, $dir, []);
+                if ($book['cover'] !== null) {
+                    try {
+                        $this->writeFile($folder, self::COVER, $this->image->toJpeg($book['cover']), $undo);
+                        $db->setHasCover($id, true);
+                    } catch (CalibreException $e) {
+                        // a damaged cover is no reason to leave out the book
+                    }
+                }
+                return [$id, $this->putFile($db, $library, $id, $format, $path, $undo)];
+            });
+            return ['books' => [$id], 'result' => 'added', 'id' => $id, 'title' => $fields['title'], 'file' => $file];
+        }, true);
+    }
+
+    /**
+     * Adds a file to a book as another format, or in place of the file of this format.
+     *
+     * @param string $path local file, such as an upload
+     * @param string $name its name for the user, which gives the format
+     * @return array{books: list<int>, replaced: bool, file: File}
+     */
+    public function addFormat(string $uid, Folder $library, int $id, string $path, string $name, bool $replace): array {
+        $format = $this->formatOf($name);
+        return $this->change($uid, $library, function (CalibreDb $db, array &$undo) use ($library, $id, $path, $format, $replace): array {
+            $replaced = isset($this->record($db, $id)['formats'][$format]);
+            if ($replaced && !$replace) {
+                throw new CalibreException('This book has a ' . $format . ' file already');
+            }
+            $file = $db->transaction(fn (): File => $this->putFile($db, $library, $id, $format, $path, $undo));
+            return ['books' => [$id], 'replaced' => $replaced, 'file' => $file];
+        }, true);
+    }
+
+    /** The format of a file for Calibre: "book.kepub.epub" is an EPUB. */
+    private function formatOf(string $name): string {
+        $format = strtoupper(FilenameExtractor::format($name));
+        if (preg_match('/^[A-Z0-9]{1,10}$/', $format) !== 1) {
+            throw new CalibreException('Calibre cannot tell the type of "' . $name . '". Its name has to end in a type such as .epub');
+        }
+        return $format;
     }
 
     /**
@@ -743,20 +821,7 @@ class CalibreLibrary {
         $id = $db->add($fields, $move ? $book['added'] : null);
         $author = $fields['authors'][0] ?? 'Unknown';
         $path = $this->adoptAuthorFolder($library, Naming::bookPath($id, $fields['title'], $author));
-        $folder = $library;
-        $at = '';
-        foreach (explode('/', $path) as $part) {
-            $at = ltrim($at . '/' . $part, '/');
-            if ($folder->nodeExists($part)) {
-                $folder = $folder->get($part);
-            } else {
-                $folder = $folder->newFolder($part);
-                $undo[] = fn () => $this->removeIfEmpty($library, $at);
-            }
-            if (!$folder instanceof Folder) {
-                throw new CalibreException('"' . $path . '" cannot be used as a folder');
-            }
-        }
+        $folder = $this->makeFolders($library, $path, $undo);
         $formats = [];
         foreach ($book['files'] as $file) {
             // book.kepub.epub is an EPUB for Calibre, and only one file per format is possible
@@ -795,6 +860,90 @@ class CalibreLibrary {
             };
         }
         $this->writeOpf($library, $this->record($db, $id));
+    }
+
+    /**
+     * Creates the folder of a new book and the author folder above it.
+     *
+     * @param list<callable> $undo
+     */
+    private function makeFolders(Folder $library, string $path, array &$undo): Folder {
+        $folder = $library;
+        $at = '';
+        foreach (explode('/', $path) as $part) {
+            $at = ltrim($at . '/' . $part, '/');
+            if ($folder->nodeExists($part)) {
+                $folder = $folder->get($part);
+            } else {
+                $folder = $folder->newFolder($part);
+                $undo[] = fn () => $this->removeIfEmpty($library, $at);
+            }
+            if (!$folder instanceof Folder) {
+                throw new CalibreException('"' . $path . '" cannot be used as a folder');
+            }
+        }
+        return $folder;
+    }
+
+    /**
+     * Puts a local file into the folder of a book as one of its formats. A file of this format is
+     * overwritten, so that it keeps its versions in Nextcloud.
+     *
+     * The name is the one the other files of the book have: Calibre gives them all the same, and
+     * transliterates names in other scripts a little differently than this app.
+     *
+     * @param list<callable> $undo
+     */
+    private function putFile(CalibreDb $db, Folder $library, int $id, string $format, string $path, array &$undo): File {
+        $record = $this->record($db, $id);
+        $folder = $this->bookFolder($library, $record);
+        $name = $record['formats'][$format] ?? array_values($record['formats'])[0]
+            ?? Naming::fileName($record['title'], $record['authors'][0] ?? 'Unknown', strlen($format) + 1);
+        $target = $name . '.' . strtolower($format);
+        $existing = $this->formatFile($folder, $name, $format);
+        if ($existing === null && $folder->nodeExists($target)) {
+            throw new CalibreException('"' . $target . '" in the folder of this book is not a file');
+        }
+        $in = fopen($path, 'rb');
+        if ($in === false) {
+            throw new \RuntimeException('Cannot read the uploaded file');
+        }
+        try {
+            if ($existing !== null) {
+                $old = $this->tempManager->getTemporaryFile();
+                $from = $existing->fopen('r');
+                $to = $old !== false ? fopen($old, 'wb') : false;
+                if ($from === false || $to === false) {
+                    throw new CalibreException('The file that would be replaced cannot be read');
+                }
+                stream_copy_to_stream($from, $to);
+                fclose($from);
+                fclose($to);
+                $at = $existing->getPath();
+                $undo[] = function () use ($at, $old): void {
+                    $node = $this->rootFolder->get($at);
+                    $back = fopen($old, 'rb');
+                    if ($node instanceof File && $back !== false) {
+                        $node->putContent($back);
+                    }
+                    @unlink($old);
+                };
+                $existing->putContent($in);
+                $file = $existing;
+            } else {
+                $file = $folder->newFile($target, $in);
+                $at = $file->getPath();
+                $undo[] = function () use ($at): void {
+                    $this->rootFolder->get($at)->delete();
+                };
+            }
+        } finally {
+            if (is_resource($in)) {
+                fclose($in);
+            }
+        }
+        $db->putFormat($id, $format, $name, (int)filesize($path));
+        return $file;
     }
 
     /** @param list<callable> $undo */

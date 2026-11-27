@@ -13,6 +13,7 @@ use OCA\Opds\Calibre\FieldReader;
 use OCA\Opds\Calibre\Importer;
 use OCA\Opds\Calibre\Sqlite;
 use OCA\Opds\Db\BookRepository;
+use OCA\Opds\Metadata\FilenameExtractor;
 use OCA\Opds\Metadata\MetadataExtractor;
 use OCA\Opds\Service\Config;
 use OCA\Opds\Service\LibraryScanner;
@@ -347,6 +348,78 @@ class CalibreController extends Controller {
         return ['author' => 'authors', 'series' => 'series', 'subject' => 'tags', 'publisher' => 'publishers'][$kind] ?? null;
     }
 
+    /**
+     * Adds an uploaded file to a library, as Calibre's "Add books" does.
+     *
+     * @param string $library folder of the library, relative to the user's files
+     * @param string $duplicates see CalibreLibrary::addFile()
+     */
+    #[NoAdminRequired]
+    public function add(string $library = '', string $duplicates = 'format'): JSONResponse {
+        return $this->guard(function (string $uid) use ($library, $duplicates): JSONResponse {
+            if (!in_array($duplicates, CalibreLibrary::DUPLICATES, true)) {
+                throw new CalibreException('Unknown choice for books that are there already');
+            }
+            $folder = $this->folder($uid, $library);
+            [$path, $name] = $this->bookUpload($uid);
+            $result = $this->calibre->addFile($uid, $folder, $path, $name, $this->importer->readUpload($uid, $path, $name), $duplicates);
+            $this->refresh($uid, $folder, $result['books']);
+            return new JSONResponse(['result' => $result['result'], 'title' => $result['title'], 'id' => $this->indexed($uid, $result['file'])]);
+        });
+    }
+
+    /** Adds an uploaded file to a book as another format, or in place of the file of its format. */
+    #[NoAdminRequired]
+    public function addFormat(int $id, bool $replace = false): JSONResponse {
+        return $this->guard(function (string $uid) use ($id, $replace): JSONResponse {
+            [$path, $name] = $this->bookUpload($uid);
+            [$library, $bookId] = $this->locate($uid, $id);
+            $result = $this->calibre->addFormat($uid, $library, $bookId, $path, $name, $replace);
+            $this->refresh($uid, $library, $result['books']);
+            return new JSONResponse(['replaced' => $result['replaced'], 'id' => $this->indexed($uid, $result['file'])]);
+        });
+    }
+
+    /** @return array{0: string, 1: string} local path and name of the uploaded book file */
+    private function bookUpload(string $uid): array {
+        $upload = $this->request->getUploadedFile('book');
+        $error = is_array($upload) ? (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+        if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
+            throw new CalibreException('The file is larger than this server accepts');
+        }
+        if ($error !== UPLOAD_ERR_OK || !is_uploaded_file((string)$upload['tmp_name'])) {
+            throw new CalibreException('The file did not arrive. It may be larger than this server accepts');
+        }
+        $name = trim(str_replace(['/', '\\', "\0"], '_', (string)($upload['name'] ?? '')));
+        $format = FilenameExtractor::format($name);
+        if (!in_array($format, $this->config->getExtensions($uid), true)) {
+            throw new CalibreException('Files of type "' . ($format !== '' ? '.' . $format : $name) . '" are not part of this catalog. Add the type in the settings first');
+        }
+        if ((int)filesize($upload['tmp_name']) === 0) {
+            throw new CalibreException('The file is empty');
+        }
+        return [(string)$upload['tmp_name'], $name];
+    }
+
+    /** The id of a book file in the book browser, 0 when it is not part of the catalog. */
+    private function indexed(string $uid, ?File $file): int {
+        return $file !== null && $this->repository->findByFileId($uid, $file->getId()) !== null ? $file->getId() : 0;
+    }
+
+    /** @param list<int> $ids books of a library that were changed */
+    private function refresh(string $uid, Folder $library, array $ids): void {
+        if ($ids === []) {
+            return;
+        }
+        try {
+            $this->scanner->refreshCalibreBooks($uid, $library, $ids);
+        } catch (\Throwable $e) {
+            // Saved all the same; the next scan brings the index up to date
+            $this->config->setLastScan($uid, 0);
+            $this->logger->warning('OPDS: could not refresh the index: ' . $e->getMessage(), ['app' => Application::APP_ID, 'exception' => $e]);
+        }
+    }
+
     /** Overview for the settings page. */
     #[NoAdminRequired]
     public function libraries(): JSONResponse {
@@ -361,7 +434,13 @@ class CalibreController extends Controller {
                 }
                 $out[] = $row;
             }
-            return new JSONResponse(['root' => $this->config->getRoot($uid), 'libraries' => $out]);
+            return new JSONResponse([
+                'root' => $this->config->getRoot($uid),
+                'libraries' => $out,
+                // For adding books
+                'extensions' => $this->config->getExtensions($uid),
+                'uploadLimit' => \OCP\Util::uploadLimit(),
+            ]);
         });
     }
 

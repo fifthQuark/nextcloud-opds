@@ -5,6 +5,7 @@ Lets the app and a real Calibre work on the same library, in turns.
     CALIBRE=/opt/calibre NEXTCLOUD=28 python3 tests/test_calibre.py
 """
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -111,6 +112,16 @@ class CalibreTest(unittest.TestCase):
             return row[0] if row else None
         finally:
             db.close()
+
+    def multipart(self, path, fields, name, data, expect=200):
+        """Sends a book file as the browser does."""
+        boundary = uuid.uuid4().hex
+        body = b''.join(('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (boundary, k, v)).encode() for k, v in fields.items())
+        body += ('--%s\r\nContent-Disposition: form-data; name="book"; filename="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % (boundary, name)).encode()
+        body += data + ('\r\n--%s--\r\n' % boundary).encode()
+        status, answer, _ = self.server.request(path, raw=body, headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+        self.assertEqual(expect, status, answer[:500])
+        return json.loads(answer.decode())
 
     def same(self, a, b):
         """Two rows of calibredb list, without what depends on where the library is."""
@@ -303,6 +314,68 @@ class CalibreTest(unittest.TestCase):
                     self.assertEqual(8, r['rating'])
                     for path in r['formats']:
                         self.assertTrue(os.path.isfile(path), path)
+
+    def test_add_books(self):
+        root = self.upload()
+        add = lambda name, data, expect=200, **fields: self.multipart('/api/calibre/books', dict({'library': root}, **fields), name, data, expect)
+        path = os.path.join(self.temp.name, 'added.epub')
+        epub(path, 'Added Book', 'New Author', 3, COVERS[1])
+        with open(path, 'rb') as f:
+            book = f.read()
+        pdf = b'%PDF-1.4\n1 0 obj\n<< /Title (Added Book) /Author (New Author) >>\nendobj\ntrailer\n<< /Info 1 0 R >>\n%%EOF\n'
+        info = self.server.api('/api/calibre')
+        self.assertIn('epub', info['extensions'])
+        self.assertGreater(info['uploadLimit'], 0)
+
+        for name, data, fields, text in [('x.exe', b'x', {}, 'not part of this catalog'), ('empty.epub', b'', {}, 'empty'),
+                                         ('x.epub', book, {'duplicates': 'maybe'}, 'Unknown choice'),
+                                         ('x.epub', book, {'library': root + '/Ann Author'}, 'no Calibre library')]:
+            self.assertIn(text, add(name, data, 400, **fields)['error'])
+        first = add('added.epub', book)
+        self.assertEqual(('added', 'Added Book'), (first['result'], first['title']))
+        self.assertGreater(first['id'], 0)
+        self.assertEqual('exists', add('again.epub', book)['result'])
+        self.assertEqual('skipped', add('again.epub', book, duplicates='skip')['result'])
+        self.assertEqual('format', add('added.pdf', pdf)['result'])
+        self.assertEqual('added', add('again.epub', book, duplicates='new')['result'])
+        # Without metadata inside, the name of the file is read as in the catalog
+        self.assertEqual('Plain Title', add('Some Writer - Plain Title.pdf', b'%PDF-1.4\n%%EOF\n')['title'])
+
+        second = self.server.books()['Second Book']
+        self.assertEqual(['EPUB'], second['calibre']['formats'])
+        formats = '/api/books/%d/formats' % second['id']
+        answer = self.multipart(formats, {}, 'whatever.pdf', pdf)
+        self.assertFalse(answer['replaced'])
+        self.assertIn('already', self.multipart(formats, {}, 'other.pdf', pdf, 400)['error'])
+        changed = pdf + b'% changed\n'
+        self.assertTrue(self.multipart(formats, {'replace': '1'}, 'other.pdf', changed)['replaced'])
+
+        cards = [c['title'] for c in self.server.api('/api/books')['books']]
+        self.assertEqual(['Added Book', 'Added Book', 'First Book', 'Plain Title', 'Second Book', 'Third Book'], sorted(cards))
+        books = self.server.books()
+        self.assertEqual(['Some Writer'], books['Plain Title']['authors'])
+        self.assertEqual({'epub', 'pdf'}, {f['format'] for f in books['Second Book']['formats']})
+
+        library = self.download(root)
+        self.check(library)
+        for restore in (False, True):
+            with self.subTest(restored=restore):
+                if restore:
+                    self.calibre.db(library, 'restore_database', '--really-do-it')
+                rows = json.loads(self.calibre.db(library, 'list', '--for-machine', '--fields', 'title,authors,formats,cover'))
+                self.assertEqual(['Added Book', 'Added Book', 'First Book', 'Plain Title', 'Second Book', 'Third Book'], sorted(r['title'] for r in rows))
+                added = sorted((r for r in rows if r['title'] == 'Added Book'), key=lambda r: r['id'])
+                self.assertEqual([['epub', 'pdf'], ['epub']], [sorted(f.rsplit('.', 1)[1] for f in r['formats']) for r in added])
+                self.assertEqual({'New Author'}, {r['authors'] for r in added})
+                self.assertTrue(all(os.path.isfile(r['cover']) for r in added))
+                for r in rows:
+                    for f in r['formats']:
+                        self.assertTrue(os.path.isfile(f), f)
+                self.assertEqual('Added Book - New Author.epub', os.path.basename(added[0]['formats'][0]) if added[0]['formats'][0].endswith('.epub')
+                                 else os.path.basename(added[0]['formats'][1]))
+                pdfs = [f for r in rows if r['title'] == 'Second Book' for f in r['formats'] if f.endswith('.pdf')]
+                with open(pdfs[0], 'rb') as f:
+                    self.assertEqual(changed, f.read())
 
     def test_takes_turns(self):
         root = self.upload()

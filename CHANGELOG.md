@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.0 – unreleased
+
+* Calibre beta: books can be added to a Calibre library from your computer with *Add books* in the
+  side bar. Their details and cover are read from the files. A file of a book that is there already
+  is added to it as another format, unless you choose to add it as a separate book or leave it out.
+* Calibre beta: *Add a file* on a book's page adds another format to the book, or replaces the file
+  of a format.
+
 ## 1.11.0 – 2026-11-27
 
 * Calibre beta: several books can be changed at once. Choose them with *Select books to change*

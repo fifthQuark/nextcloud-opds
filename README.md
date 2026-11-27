@@ -171,6 +171,13 @@ the library folder:
   authors, series (optionally numbered in the order shown), publisher, date, languages, rating and
   custom columns, add and remove tags and values of list columns. Fields left empty stay as they are;
   books that end up as they were are not touched. The books can be in several Calibre libraries.
+* **Adding books:** *Add books* in the side bar uploads files from your computer into a Calibre
+  library, as Calibre's *Add books* does. Title, authors, series, tags, description, language and
+  cover are read from each file (or from its name), and the book gets its own `Author/Title (id)`
+  folder. A file whose book is there already, with the same title and first author, is added to it
+  as another format; you can have it added as a separate book or left out instead. A book's page has
+  *Add a file* for another format, or for a new file in place of one, which Nextcloud keeps as an
+  earlier version if versions are turned on.
 * **Current folder:** *Convert the current folder* turns the library folder itself into a Calibre
   library: it gets a `metadata.db`, and the book files are moved into `Author/Title (id)` folders
   inside it. Nothing is copied, reader links keep working, and folders that become empty are

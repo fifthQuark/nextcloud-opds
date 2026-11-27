@@ -156,8 +156,9 @@ class LibraryScanner {
                 $wanted[CalibreDb::pathKey($name . '.' . $format)] = true;
             }
             foreach ($folder->getDirectoryListing() as $file) {
+                // A book added to a library outside the catalog folder stays out of the catalog
                 if ($file instanceof File && isset($wanted[CalibreDb::pathKey($file->getName())])
-                    && in_array(FilenameExtractor::format($file->getName()), $extensions, true)) {
+                    && in_array(FilenameExtractor::format($file->getName()), $extensions, true) && $this->calibre->isListed($uid, $file)) {
                     $this->index($uid, $userFolder->getRelativePath($file->getPath()) ?? $file->getPath(), $file, '', $now, $library, $record);
                 }
             }

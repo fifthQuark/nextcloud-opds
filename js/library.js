@@ -862,7 +862,7 @@
         return nodes.flatMap((n, i) => (i ? [', ', n] : [n]));
     }
 
-    function drawBook(book) {
+    function drawBook(book, note) {
         stopEditing();
         for (const l of book.languages) {
             languageNames[l.code] = l.name;
@@ -902,8 +902,11 @@
             el('a', { class: 'ol-inline', href: OC.generateUrl('/f/' + f.id) }, 'Show in Files'))));
 
         const actions = [];
+        const status = el('p', { class: 'ol-status', role: 'status' }, note || '');
         if (book.calibre && !book.calibre.readOnly) {
-            actions.push(el('button', { type: 'button', onclick: () => drawEditor(book) }, 'Edit'), el('span', { class: 'ol-beta' }, 'Beta'));
+            const pick = el('input', { type: 'file', hidden: true, onchange: () => addFormat(book, pick, status) });
+            actions.push(el('button', { type: 'button', onclick: () => drawEditor(book) }, 'Edit'),
+                el('button', { type: 'button', onclick: () => pick.click() }, 'Add a file…'), pick, el('span', { class: 'ol-beta' }, 'Beta'));
         }
         dialog.replaceChildren(closeButton(), el('div', { class: 'ol-book' },
             el('div', { class: 'ol-book-cover' }, cover(book, book.cover, false)),
@@ -912,9 +915,177 @@
                 book.authors.length ? el('p', { class: 'ol-authors' }, joined(book.authors.map((a) => link({ author: a }, a)))) : null,
                 files,
                 actions.length ? el('div', { class: 'ol-actions' }, actions) : null,
+                actions.length || note ? status : null,
                 book.calibre && book.calibre.readOnly ? el('p', { class: 'ol-sub' }, 'Cannot be edited: ' + book.calibre.readOnly + '.') : null,
                 book.description ? el('div', { class: 'ol-description' }, book.description.split('\n').map((t) => el('p', null, t))) : null,
                 facts)));
+    }
+
+    /** Another format for a book of Calibre, or a new file in place of one */
+    async function addFormat(book, input, status) {
+        const file = input.files[0];
+        input.value = '';
+        if (!file) {
+            return;
+        }
+        const format = (/\.fb2\.zip$/i.test(file.name) ? 'fb2' : file.name.split('.').pop()).toUpperCase();
+        const replace = book.calibre.formats.includes(format);
+        if (replace && !window.confirm('This book has a ' + format + ' file already. Replace it with "' + file.name + '"?')) {
+            return;
+        }
+        status.className = 'ol-status';
+        status.textContent = 'Adding ' + file.name + '…';
+        const data = new FormData();
+        data.append('book', file, file.name);
+        if (replace) {
+            data.append('replace', '1');
+        }
+        try {
+            await api('POST', '/api/books/' + book.id + '/formats', data);
+            const fresh = await api('GET', '/api/books/' + book.id);
+            drawBook(fresh, (replace ? 'Replaced the ' : 'Added the ') + format + ' file.');
+            updateCard(fresh);
+        } catch (problem) {
+            status.textContent = problem.message;
+            status.className = 'ol-status ol-error';
+        }
+    }
+
+    // --------------------------------------------------------------- adding
+
+    /** Files from the computer into a Calibre library, as "Add books" in Calibre */
+    async function drawAdd() {
+        stopEditing();
+        dialog.replaceChildren(el('p', { class: 'ol-message', id: 'ol-dialog-title' }, 'Loading…'));
+        if (!dialog.open) {
+            dialog.showModal();
+        }
+        let info;
+        try {
+            info = await api('GET', '/api/calibre');
+        } catch (e) {
+            dialog.replaceChildren(closeButton(), el('p', { class: 'ol-message ol-error', id: 'ol-dialog-title' }, e.message));
+            return;
+        }
+        const title = el('h3', { id: 'ol-dialog-title' }, 'Add books ', el('span', { class: 'ol-beta' }, 'Beta'));
+        const usable = info.libraries.filter((l) => !l.problem);
+        if (!usable.length) {
+            dialog.replaceChildren(closeButton(), el('div', { class: 'ol-edit ol-add' }, title,
+                el('p', null, info.libraries.length
+                    ? 'No Calibre library can be changed right now. ' + info.libraries.map((l) => l.path + ': ' + l.problem).join('; ') + '.'
+                    : 'There is no Calibre library yet. You can make one from your books in the settings.'),
+                el('p', null, el('a', { href: state.settingsUrl }, 'Settings'))));
+            return;
+        }
+        // The catalog itself, or the library inside it that has the most books
+        const best = usable.find((l) => l.path === info.root) || [...usable].sort((a, b) => b.books - a.books)[0];
+        const library = el('select', null, usable.map((l) => el('option', { value: l.path, selected: l === best }, l.path + ' (' + plural(l.books, 'book') + ')')));
+        const files = el('input', { type: 'file', multiple: true, required: true, accept: info.extensions.map((x) => '.' + x).join(',') });
+        const choice = (value, text) => el('label', { class: 'ol-check' }, el('input', { type: 'radio', name: 'ol-duplicates', value, checked: value === 'format' }), text);
+        const duplicates = el('fieldset', { class: 'ol-choices' },
+            el('legend', null, 'When a book with the same title and first author is there already'),
+            choice('format', 'Add the file to that book, unless it has this type of file already'),
+            choice('new', 'Add it as a separate book'),
+            choice('skip', 'Leave the file out'));
+        const status = el('p', { class: 'ol-status', role: 'status' });
+        const save = el('button', { type: 'submit', class: 'primary' }, 'Add');
+        const cancel = el('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel');
+        let running = false;
+        let stopped = false;
+        dialog.dataset.editing = '1';
+        dialog.mayLeave = () => {
+            if (running && !window.confirm('Stop adding the other files? The ones added so far stay.')) {
+                return false;
+            }
+            stopped = true;
+            return true;
+        };
+
+        const form = el('form', { class: 'ol-edit ol-add', onsubmit: async (e) => {
+            e.preventDefault();
+            const chosen = [...files.files];
+            if (!chosen.length) {
+                return;
+            }
+            const how = duplicates.querySelector('input:checked').value;
+            running = true;
+            save.disabled = files.disabled = library.disabled = true;
+            status.className = 'ol-status';
+            const results = [];
+            for (const [i, file] of chosen.entries()) {
+                if (stopped) {
+                    break;
+                }
+                status.textContent = 'Adding ' + (i + 1) + ' of ' + chosen.length + ': ' + file.name + '…';
+                if (info.uploadLimit > 0 && file.size > info.uploadLimit) {
+                    results.push({ file, error: 'It is larger than this server accepts (' + size(info.uploadLimit) + ')' });
+                    continue;
+                }
+                const data = new FormData();
+                data.append('library', library.value);
+                data.append('duplicates', how);
+                data.append('book', file, file.name);
+                try {
+                    results.push({ file, ...(await api('POST', '/api/calibre/books', data)) });
+                } catch (problem) {
+                    results.push({ file, error: problem.message });
+                }
+            }
+            running = false;
+            stopEditing();
+            shownList = null;
+            if (stopped) {
+                route();
+            } else {
+                drawAdded(results, library.value);
+            }
+        } },
+            title,
+            el('p', { class: 'ol-sub' }, 'Title, authors and the other details are read from the files, and can be changed afterwards. Calibre has to be closed while books are added.'),
+            usable.length > 1 ? field('library', 'Calibre library', library) : el('p', { class: 'ol-into' }, 'Into the Calibre library ', el('strong', null, best.path)),
+            field('files', 'Files', files, 'You can choose several' + (info.uploadLimit > 0 ? ', each at most ' + size(info.uploadLimit) : '')),
+            duplicates,
+            status,
+            el('div', { class: 'ol-actions' }, save, cancel));
+        dialog.replaceChildren(closeButton(), form);
+        files.focus();
+    }
+
+    /** What became of each file */
+    function drawAdded(results, library) {
+        const counts = { added: 0, format: 0, there: 0, failed: 0 };
+        const what = { added: 'New book', format: 'Added to', exists: 'Already there', skipped: 'Left out, already there' };
+        const items = results.map((r) => {
+            const key = r.error ? 'failed' : r.result === 'exists' || r.result === 'skipped' ? 'there' : r.result;
+            counts[key]++;
+            if (r.error) {
+                return el('li', { class: 'ol-error' }, el('strong', null, r.file.name), ': ' + r.error);
+            }
+            const name = r.id ? el('a', { href: openLink(r.id) }, r.title) : r.title;
+            return el('li', null, what[r.result] + ': ', el('strong', null, name), el('span', { class: 'ol-sub' }, ' ' + r.file.name));
+        });
+        const parts = [];
+        if (counts.added) {
+            parts.push('Added ' + plural(counts.added, 'new book') + '.');
+        }
+        if (counts.format) {
+            parts.push(plural(counts.format, 'file') + ' added to books that were there.');
+        }
+        if (counts.there) {
+            parts.push(plural(counts.there, 'file') + ' left out because ' + (counts.there === 1 ? 'its book has' : 'their books have') + ' it already.');
+        }
+        if (counts.failed) {
+            parts.push(plural(counts.failed, 'file') + ' could not be added.');
+        }
+        dialog.addEventListener('close', () => route(), { once: true });
+        dialog.replaceChildren(closeButton(), el('div', { class: 'ol-edit ol-add' },
+            el('h3', { id: 'ol-dialog-title' }, 'Add books ', el('span', { class: 'ol-beta' }, 'Beta')),
+            el('p', { class: counts.failed && counts.failed === results.length ? 'ol-error' : null }, parts.join(' ') || 'Nothing was added.'),
+            el('ul', { class: 'ol-added' }, items),
+            el('p', { class: 'ol-sub' }, 'In ' + library + '.'),
+            el('div', { class: 'ol-actions' },
+                el('button', { type: 'button', class: 'primary', onclick: () => dialog.close() }, 'Done'),
+                el('button', { type: 'button', onclick: () => drawAdd() }, 'Add more…'))));
     }
 
     // --------------------------------------------------------------- editor
@@ -1325,6 +1496,10 @@
         }
     }
     $('ol-refresh').addEventListener('click', () => refresh(true));
+    if (state.calibre) {
+        $('ol-add').hidden = false;
+        $('ol-add').addEventListener('click', () => drawAdd());
+    }
 
     window.addEventListener('hashchange', route);
     route();

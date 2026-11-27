@@ -715,6 +715,17 @@ class CalibreDb {
         $this->touch($id);
     }
 
+    /** Adds a format, or records the new size of one whose file was replaced. */
+    public function putFormat(int $id, string $format, string $name, int $size): void {
+        $format = strtoupper($format);
+        if ((int)$this->db->value('SELECT COUNT(*) FROM data WHERE book = ? AND format = ?', [$id, $format]) === 0) {
+            $this->addFormat($id, $format, $name, $size);
+            return;
+        }
+        $this->db->run('UPDATE data SET uncompressed_size = ?, name = ? WHERE book = ? AND format = ?', [$size, $name, $id, $format]);
+        $this->touch($id);
+    }
+
     public function setHasCover(int $id, bool $has): void {
         $this->db->run('UPDATE books SET has_cover = ? WHERE id = ?', [$has ? 1 : 0, $id]);
         $this->touch($id);

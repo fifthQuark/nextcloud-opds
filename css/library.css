@@ -158,3 +158,18 @@
     .ol-bulk { padding: 20px 16px; }
     .ol-pair-even { grid-template-columns: minmax(0, 1fr); }
 }
+/* adding books */
+.ol-add { padding: 28px; max-width: 640px; }
+.ol-add h3 { margin: 0 44px 4px 0; font-size: 22px; line-height: 1.3; font-weight: 700; }
+.ol-into { margin: 10px 0 14px; }
+.ol-book-text > .ol-status:empty { display: none; }
+.ol-add input[type="file"] { display: block; width: 100%; margin: 4px 0; }
+.ol-choices { margin: 4px 0 12px; padding: 0; border: 0; }
+.ol-choices legend { margin-bottom: 8px; padding: 0; font-weight: 600; }
+.ol-choices .ol-check { margin: 0 0 6px; }
+.ol-added { margin: 8px 0 12px; padding: 0; list-style: none; }
+.ol-added li { padding: 4px 0; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.ol-added .ol-sub { margin-inline-start: 6px; }
+@media (max-width: 640px) {
+    .ol-add { padding: 20px 16px; }
+}

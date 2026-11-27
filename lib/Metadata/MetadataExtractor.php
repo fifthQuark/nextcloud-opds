@@ -29,20 +29,51 @@ class MetadataExtractor {
     }
 
     public function read(File $file, string $filenamePattern): Metadata {
-        $name = $file->getName();
-        $format = FilenameExtractor::format($name);
-        $fallback = $this->filename->extract($name, $filenamePattern);
-
-        $meta = null;
         $tempPath = null;
         try {
-            $meta = $this->readEmbedded($file, $format, $tempPath);
-        } catch (\Throwable $e) {
-            $this->logger->info('OPDS: could not read metadata of ' . $file->getPath() . ': ' . $e->getMessage(), ['app' => 'opds']);
+            // By reference: the copy that localPath() may make is removed here
+            $local = function () use ($file, &$tempPath): string {
+                return $this->localPath($file, $tempPath);
+            };
+            return $this->combine($file->getName(), $filenamePattern, $file->getPath(), fn (string $format): ?Metadata => $this->readEmbedded(
+                $format, $file->getName(), $local, fn (callable $fn) => $this->withHandle($file, $fn), (int)$file->getSize()));
         } finally {
             if ($tempPath !== null && file_exists($tempPath)) {
                 @unlink($tempPath);
             }
+        }
+    }
+
+    /**
+     * For a file that is not among the files of the user yet, such as an upload.
+     *
+     * @param string $name the name the file has for the user, for its type and the fallback
+     */
+    public function readLocal(string $path, string $name, string $filenamePattern): Metadata {
+        return $this->combine($name, $filenamePattern, $name, fn (string $format): ?Metadata => $this->readEmbedded(
+            $format, $name, static fn (): string => $path, static function (callable $fn) use ($path) {
+                $handle = fopen($path, 'rb');
+                if ($handle === false) {
+                    return null;
+                }
+                try {
+                    return $fn($handle);
+                } finally {
+                    fclose($handle);
+                }
+            }, (int)filesize($path)));
+    }
+
+    /** @param callable(string): ?Metadata $embedded reads the metadata inside the file */
+    private function combine(string $name, string $filenamePattern, string $shownPath, callable $embedded): Metadata {
+        $format = FilenameExtractor::format($name);
+        $fallback = $this->filename->extract($name, $filenamePattern);
+
+        $meta = null;
+        try {
+            $meta = $embedded($format);
+        } catch (\Throwable $e) {
+            $this->logger->info('OPDS: could not read metadata of ' . $shownPath . ': ' . $e->getMessage(), ['app' => 'opds']);
         }
         $meta ??= new Metadata();
 
@@ -78,27 +109,31 @@ class MetadataExtractor {
         $book->isbn = $meta->isbn;
     }
 
-    private function readEmbedded(File $file, string $format, ?string &$tempPath): ?Metadata {
+    /**
+     * @param callable(): string $path the file on local disk
+     * @param callable(callable): mixed $handle calls a function with an open handle of the file
+     */
+    private function readEmbedded(string $format, string $name, callable $path, callable $handle, int $size): ?Metadata {
         switch ($format) {
             case 'epub':
             case 'kepub':
-                return $this->epub->extract($this->localPath($file, $tempPath));
+                return $this->epub->extract($path());
             case 'pdf':
-                return $this->withHandle($file, fn ($h) => $this->pdf->extract($h, $file->getSize()));
+                return $handle(fn ($h) => $this->pdf->extract($h, $size));
             case 'mobi':
             case 'prc':
             case 'azw':
             case 'azw3':
             case 'azw4':
-                return $this->withHandle($file, fn ($h) => $this->mobi->extract($h, $file->getSize()));
+                return $handle(fn ($h) => $this->mobi->extract($h, $size));
             case 'cbz':
             case 'cbr':
-                return $this->comic->extract($this->localPath($file, $tempPath), $format);
+                return $this->comic->extract($path(), $format);
             case 'fb2':
-                return $this->fb2->extract($this->localPath($file, $tempPath), str_ends_with(strtolower($file->getName()), '.zip'));
+                return $this->fb2->extract($path(), str_ends_with(strtolower($name), '.zip'));
             case 'docx':
             case 'odt':
-                return $this->office->extract($this->localPath($file, $tempPath), $format);
+                return $this->office->extract($path(), $format);
             default:
                 return null;
         }

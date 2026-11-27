@@ -313,6 +313,7 @@ class LibraryController extends Controller {
                     'formatted' => $record['comments'] !== '' && preg_match('/<(?!\/?(p|br|div)\b)[a-z]/i', $record['comments']) === 1,
                     'comments' => \OCA\Opds\Metadata\Text::plain($record['comments'], 100000),
                     'languageNames' => array_map(static fn (string $c): string => Languages::name($c), $record['languages']),
+                    'formats' => array_keys($record['formats']),
                 ] + array_intersect_key($record, array_flip(['rev', 'title', 'sort', 'authors', 'author_sort', 'series', 'series_index', 'tags', 'publisher', 'pubdate', 'rating', 'identifiers', 'has_cover', 'path', 'fields']));
             });
         } catch (\Throwable $e) {

@@ -8,6 +8,7 @@ use OCA\Opds\Db\Book;
 use OCA\Opds\Db\BookRepository;
 use OCA\Opds\Metadata\EpubExtractor;
 use OCA\Opds\Metadata\MetadataExtractor;
+use OCA\Opds\Service\Config;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
@@ -24,6 +25,7 @@ class Importer {
         private MetadataExtractor $extractor,
         private EpubExtractor $opf,
         private FieldReader $fields,
+        private Config $config,
     ) {
     }
 
@@ -42,6 +44,21 @@ class Importer {
         }
         $last = (int)$result['last'];
         return $result + ['processed' => count(array_filter($works, static fn (int $n): bool => $n <= $last)), 'total' => count($works)];
+    }
+
+    /**
+     * What a file that is added to a library brings along, read as when the catalog finds it.
+     *
+     * @param string $path local file, such as an upload
+     * @param string $name its name for the user
+     * @return array{fields: array<string,mixed>, cover: ?string}
+     */
+    public function readUpload(string $uid, string $path, string $name): array {
+        $meta = $this->extractor->readLocal($path, $name, $this->config->getFilenamePattern($uid));
+        $book = new Book();
+        $book->name = $name;
+        $this->extractor->apply($book, $meta);
+        return ['fields' => $this->toFields($book), 'cover' => $meta->coverData];
     }
 
     /**

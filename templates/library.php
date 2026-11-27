@@ -23,6 +23,7 @@ $views = [
             <?php endforeach; ?>
         </ul>
         <div class="ol-nav-foot">
+            <button type="button" id="ol-add" hidden>Add books…</button>
             <button type="button" id="ol-refresh">Check for new books</button>
             <a id="ol-settings" href="#">Settings</a>
         </div>
