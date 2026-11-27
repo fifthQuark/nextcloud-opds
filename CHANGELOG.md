@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.11.0 – unreleased
+## 1.11.0 – 2026-11-27
 
 * Calibre beta: several books can be changed at once. Choose them with *Select books to change*
   above any list of books, then set the authors, series (numbered in the order shown, if you like),
