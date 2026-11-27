@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.12.0 – unreleased
+## 1.12.0 – 2026-11-27
 
 * Calibre beta: books can be added to a Calibre library from your computer with *Add books* in the
   side bar. Their details and cover are read from the files. A file of a book that is there already
